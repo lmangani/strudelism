@@ -469,6 +469,8 @@ const roomStatus = document.getElementById('room-status');
 const peerCount = document.getElementById('peer-count');
 const userNameDisplay = document.getElementById('user-name-display');
 const peersContainer = document.getElementById('peers-container');
+const copyUrlBtn = document.getElementById('copy-url-btn');
+const shareRoomBtn = document.getElementById('share-room-btn');
 
 // Initialize Strudel
 async function initializeStrudel() {
@@ -1306,12 +1308,18 @@ function updateConnectionUI() {
     peerCount.textContent = `${peers.size} peer${peers.size !== 1 ? 's' : ''}`;
     userNameDisplay.textContent = userName || 'You';
     userNameDisplay.style.display = 'inline-block';
+    if (shareRoomBtn) {
+      shareRoomBtn.style.display = 'inline-block';
+    }
   } else {
     roomStatus.textContent = 'Disconnected';
     roomStatus.classList.remove('connected');
     connectBtn.textContent = '🔗 Connect';
     peerCount.textContent = '0 peers';
     userNameDisplay.style.display = 'none';
+    if (shareRoomBtn) {
+      shareRoomBtn.style.display = 'none';
+    }
     peers.clear();
     updatePeersDisplay();
   }
@@ -1352,36 +1360,51 @@ connectBtn.addEventListener('click', () => {
     }
     isConnected = false;
     updateConnectionUI();
+    
+    // Remove room ID from URL
+    const url = new URL(window.location);
+    url.searchParams.delete('room');
+    window.history.pushState({}, '', url);
   } else {
     // Show connect modal
     openModal(connectModal);
-    // Generate random room ID if empty
+    // Read room ID from URL if not already set
     if (!roomIdInput.value) {
-      roomIdInput.value = Math.random().toString(36).substring(2, 9);
+      readRoomIdFromURL();
+      // Generate random room ID if still empty
+      if (!roomIdInput.value) {
+        roomIdInput.value = Math.random().toString(36).substring(2, 9);
+      }
     }
   }
 });
 
 createRoomBtn.addEventListener('click', () => {
-  roomIdInput.value = Math.random().toString(36).substring(2, 9);
+  const newRoomId = Math.random().toString(36).substring(2, 9);
+  roomIdInput.value = newRoomId;
+  updateURLWithRoomId(newRoomId);
 });
 
 joinRoomBtn.addEventListener('click', () => {
   const name = userNameInput.value.trim();
-  const roomName = roomIdInput.value.trim();
+  let roomName = roomIdInput.value.trim();
   
   if (!name) {
     alert('Please enter your name');
     return;
   }
   
+  // If no room ID provided, generate one
   if (!roomName) {
-    alert('Please enter a room ID');
-    return;
+    roomName = Math.random().toString(36).substring(2, 9);
+    roomIdInput.value = roomName;
   }
   
   userName = name;
   roomId = roomName;
+  
+  // Update URL with room ID
+  updateURLWithRoomId(roomId);
   
   // Trystero config - using IPFS (no signup required)
   // For production, consider Firebase or custom signaling server
@@ -1391,6 +1414,56 @@ joinRoomBtn.addEventListener('click', () => {
   
   initializeRoom(config);
   closeModal(connectModal);
+});
+
+// Update URL with room ID
+function updateURLWithRoomId(roomId) {
+  const url = new URL(window.location);
+  url.searchParams.set('room', roomId);
+  window.history.pushState({ room: roomId }, '', url);
+}
+
+// Read room ID from URL on page load
+function readRoomIdFromURL() {
+  const urlParams = new URLSearchParams(window.location.search);
+  const roomIdFromURL = urlParams.get('room');
+  if (roomIdFromURL) {
+    roomIdInput.value = roomIdFromURL;
+    roomId = roomIdFromURL;
+  }
+}
+
+// Handle browser back/forward buttons
+window.addEventListener('popstate', (event) => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const roomIdFromURL = urlParams.get('room');
+  if (roomIdFromURL && roomIdFromURL !== roomId && isConnected) {
+    // User navigated to a different room - disconnect and reconnect
+    if (room) {
+      room.leave();
+      room = null;
+    }
+    isConnected = false;
+    updateConnectionUI();
+    
+    // Auto-join new room if user was connected
+    roomId = roomIdFromURL;
+    roomIdInput.value = roomId;
+    if (userName) {
+      const config = {
+        announce: ['/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star']
+      };
+      initializeRoom(config);
+    }
+  } else if (!roomIdFromURL && isConnected) {
+    // Room ID removed from URL - disconnect
+    if (room) {
+      room.leave();
+      room = null;
+    }
+    isConnected = false;
+    updateConnectionUI();
+  }
 });
 
 // Close modals
@@ -1410,7 +1483,65 @@ document.querySelectorAll('.close').forEach(closeBtn => {
   });
 });
 
+// Copy room URL to clipboard
+function copyRoomURL() {
+  const currentRoomId = roomId || roomIdInput.value.trim();
+  if (currentRoomId) {
+    const url = new URL(window.location);
+    url.searchParams.set('room', currentRoomId);
+    navigator.clipboard.writeText(url.toString()).then(() => {
+      // Update button text temporarily
+      if (copyUrlBtn) {
+        copyUrlBtn.textContent = '✓ Copied!';
+        setTimeout(() => {
+          copyUrlBtn.textContent = '📋 Copy Room URL';
+        }, 2000);
+      }
+      if (shareRoomBtn) {
+        shareRoomBtn.textContent = '✓ Copied!';
+        setTimeout(() => {
+          shareRoomBtn.textContent = '📋 Share Room';
+        }, 2000);
+      }
+      // Show brief notification
+      const notification = document.createElement('div');
+      notification.textContent = 'Room URL copied to clipboard!';
+      notification.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: var(--success);
+        color: white;
+        padding: 1rem 1.5rem;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        z-index: 10000;
+        animation: slideIn 0.3s ease;
+      `;
+      document.body.appendChild(notification);
+      setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+      }, 2000);
+    }).catch(err => {
+      console.error('Failed to copy URL:', err);
+      alert('Failed to copy URL. Room ID: ' + currentRoomId);
+    });
+  } else {
+    alert('No room ID available');
+  }
+}
+
+if (copyUrlBtn) {
+  copyUrlBtn.addEventListener('click', copyRoomURL);
+}
+
+if (shareRoomBtn) {
+  shareRoomBtn.addEventListener('click', copyRoomURL);
+}
+
 // Initialize
+readRoomIdFromURL();
 initializeP2P();
 initializeStrudel().then(() => {
   generateCodeFromBlocks();

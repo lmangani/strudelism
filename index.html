@@ -14,6 +14,7 @@
         <div class="session-info">
           <span id="room-status" class="room-status">Disconnected</span>
           <span id="peer-count" class="peer-count">0 peers</span>
+          <button id="share-room-btn" class="btn btn-small" style="display: none; margin-left: 0.5rem;">📋 Share Room</button>
         </div>
         <button id="connect-btn" class="btn btn-primary">🔗 Connect</button>
         <button id="play-btn" class="btn btn-primary">▶ Play</button>
@@ -105,7 +106,8 @@
         <div class="connect-input-group">
           <label>Room ID:</label>
           <input type="text" id="room-id-input" placeholder="Enter or create room ID">
-          <small>Share this room ID with other players</small>
+          <small>Share the URL or room ID with other players</small>
+          <button id="copy-url-btn" class="btn btn-small" style="margin-top: 0.5rem; font-size: 0.85rem;">📋 Copy Room URL</button>
         </div>
         <div class="connect-input-group">
           <button id="join-room-btn" class="btn btn-primary">Join Session</button>
