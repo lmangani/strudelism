@@ -1,5 +1,5 @@
 // Strudel imports - will be loaded dynamically
-let initStrudel, evaluate, note, silence, hush;
+let initStrudel, evaluate, note, silence, hush, loadSamples;
 
 // Initialize Strudel
 let strudelInitialized = false;
@@ -408,6 +408,7 @@ async function initializeStrudel() {
       note = strudelModule.note;
       silence = strudelModule.silence;
       hush = strudelModule.hush;
+      loadSamples = strudelModule.loadSamples || strudelModule.load || null;
     } catch (npmError) {
       // Fallback to CDN
       console.log('Trying CDN import...');
@@ -417,6 +418,7 @@ async function initializeStrudel() {
       note = cdnModule.note;
       silence = cdnModule.silence;
       hush = cdnModule.hush;
+      loadSamples = cdnModule.loadSamples || cdnModule.load || null;
     }
     
     if (!initStrudel || !evaluate) {
@@ -424,6 +426,38 @@ async function initializeStrudel() {
     }
     
     await initStrudel();
+    
+    // Load sound samples - CRITICAL for drum samples to work!
+    if (loadSamples) {
+      try {
+        await loadSamples();
+        console.log('Strudel samples loaded successfully');
+      } catch (sampleError) {
+        console.warn('Could not load samples via loadSamples(), trying alternative method:', sampleError);
+        // Try alternative: evaluate code to load samples
+        try {
+          await evaluate('loadSamples()');
+          console.log('Strudel samples loaded via evaluate');
+        } catch (evalError) {
+          console.warn('Could not load samples, trying direct load:', evalError);
+          // Final fallback: load via code
+          try {
+            await evaluate('await loadSamples()');
+          } catch (e) {
+            console.error('Failed to load samples:', e);
+          }
+        }
+      }
+    } else {
+      // Fallback: use evaluate to load samples
+      try {
+        await evaluate('await loadSamples()');
+        console.log('Strudel samples loaded via evaluate fallback');
+      } catch (evalError) {
+        console.warn('Sample loading may have failed:', evalError);
+      }
+    }
+    
     strudelInitialized = true;
     console.log('Strudel initialized successfully');
     
