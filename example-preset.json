@@ -1,0 +1,42 @@
+{
+  "blocks": [
+    {
+      "type": "sample",
+      "muted": false,
+      "disabled": false,
+      "params": {
+        "sample": "bd",
+        "pattern": "x ~ ~ x ~ ~ x ~"
+      }
+    },
+    {
+      "type": "sample",
+      "muted": false,
+      "disabled": false,
+      "params": {
+        "sample": "sn",
+        "pattern": "~ ~ x ~ ~ ~ ~ ~"
+      }
+    },
+    {
+      "type": "note",
+      "muted": false,
+      "disabled": false,
+      "params": {
+        "pattern": "<0 1 2 3>",
+        "scale": "major",
+        "octave": 4
+      }
+    },
+    {
+      "type": "effect",
+      "muted": false,
+      "disabled": false,
+      "params": {
+        "effect": "reverb",
+        "room": 0.3
+      }
+    }
+  ]
+}
+

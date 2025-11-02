@@ -1,0 +1,18 @@
+{
+  "name": "strudelism",
+  "version": "1.0.0",
+  "description": "Amazing Web UI for Strudel live performances",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@strudel/web": "^1.0.3"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}
+

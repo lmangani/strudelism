@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Strudelism - Live Performance UI</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="app">
+    <header class="header">
+      <h1>🎵 Strudelism</h1>
+      <div class="header-controls">
+        <button id="play-btn" class="btn btn-primary">▶ Play</button>
+        <button id="stop-btn" class="btn btn-secondary">⏹ Stop</button>
+        <button id="clear-btn" class="btn btn-secondary">🗑 Clear</button>
+        <button id="preset-btn" class="btn btn-secondary">📥 Load Preset</button>
+        <button id="docs-btn" class="btn btn-secondary">📚 Examples</button>
+      </div>
+    </header>
+
+    <div class="main-container">
+      <div class="blocks-panel">
+        <div class="panel-header">
+          <h2>Pattern Blocks</h2>
+          <button id="add-block-btn" class="btn btn-small">+ Add Block</button>
+        </div>
+        <div id="blocks-container" class="blocks-container">
+          <!-- Blocks will be added here -->
+        </div>
+      </div>
+
+      <div class="repl-panel">
+        <div class="panel-header">
+          <h2>Code Editor</h2>
+          <button id="update-code-btn" class="btn btn-small">🔄 Refresh</button>
+        </div>
+        <div id="repl-container" class="repl-container">
+          <!-- REPL will be embedded here -->
+        </div>
+      </div>
+    </div>
+
+    <!-- Preset Modal -->
+    <div id="preset-modal" class="modal">
+      <div class="modal-content">
+        <span class="close">&times;</span>
+        <h2>Load Preset</h2>
+        <div class="preset-input-group">
+          <label>GitHub/Gist URL:</label>
+          <input type="text" id="preset-url" placeholder="https://gist.githubusercontent.com/... or https://raw.githubusercontent.com/...">
+          <button id="load-preset-btn" class="btn btn-primary">Load</button>
+        </div>
+        <div class="preset-examples">
+          <h3>Or choose from examples:</h3>
+          <div id="preset-examples-list" class="preset-examples-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Documentation Modal -->
+    <div id="docs-modal" class="modal">
+      <div class="modal-content modal-large">
+        <span class="close">&times;</span>
+        <h2>Strudel Examples & Documentation</h2>
+        <div id="docs-content" class="docs-content"></div>
+      </div>
+    </div>
+
+    <!-- Block Selection Modal -->
+    <div id="block-select-modal" class="modal">
+      <div class="modal-content">
+        <span class="close">&times;</span>
+        <h2>Add Block</h2>
+        <div id="block-types-list" class="block-types-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/main.js"></script>
+</body>
+</html>
+
