@@ -9,10 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@strudel/web": "^1.0.3"
+    "@strudel/web": "^1.2.6"
   },
   "devDependencies": {
-    "vite": "^5.0.0"
+    "vite": "^7.1.12"
   }
 }
 
