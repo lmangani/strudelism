@@ -8,7 +8,17 @@ let strudelInitialized = false;
 let blocks = [];
 let blockIdCounter = 0;
 
-// Block types and their parameters
+// Preset options for dropdowns
+const PRESET_OPTIONS = {
+  drumSamples: ['bd', 'sn', 'hh', 'cp', 'oh', 'ride', 'crash', 'tom', 'rim', 'clap', 'perc', '808', '909'],
+  scales: ['major', 'minor', 'pentatonic', 'blues', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'locrian', 'harmonic', 'melodic'],
+  waves: ['sine', 'saw', 'square', 'triangle'],
+  effects: ['reverb', 'delay', 'lpf', 'hpf', 'gain', 'pan'],
+  modulationTypes: ['sine', 'saw', 'perlin'],
+  modulationTargets: ['lpf', 'hpf', 'gain', 'pan', 'room']
+};
+
+// Block types and their parameters with field types
 const BLOCK_TYPES = {
   note: {
     name: 'Note Pattern',
@@ -18,16 +28,25 @@ const BLOCK_TYPES = {
       scale: 'major',
       octave: 4
     },
+    paramTypes: {
+      pattern: 'text',
+      scale: 'select',
+      octave: 'number'
+    },
     generate: (params) => {
       return `n("${params.pattern}").scale('${params.scale}${params.octave}')`;
     }
   },
   sample: {
-    name: 'Sample',
-    icon: '🎤',
+    name: 'Drum Sample',
+    icon: '🥁',
     defaultParams: {
       sample: 'bd',
       pattern: 'x ~ x ~'
+    },
+    paramTypes: {
+      sample: 'select',
+      pattern: 'text'
     },
     generate: (params) => {
       return `s("${params.pattern}")`;
@@ -42,6 +61,12 @@ const BLOCK_TYPES = {
       scale: 'major',
       octave: 4
     },
+    paramTypes: {
+      pattern: 'text',
+      wave: 'select',
+      scale: 'select',
+      octave: 'number'
+    },
     generate: (params) => {
       return `n("${params.pattern}").scale('${params.scale}${params.octave}').s('${params.wave}')`;
     }
@@ -53,9 +78,16 @@ const BLOCK_TYPES = {
       effect: 'reverb',
       room: 0.5
     },
+    paramTypes: {
+      effect: 'select',
+      room: 'number',
+      delay: 'number',
+      freq: 'number',
+      gain: 'number'
+    },
     generate: (params) => {
       if (params.effect === 'reverb') {
-        return `.room(${params.room})`;
+        return `.room(${params.room || 0.5})`;
       } else if (params.effect === 'delay') {
         return `.delay(${params.delay || 0.25})`;
       } else if (params.effect === 'lpf') {
@@ -78,8 +110,14 @@ const BLOCK_TYPES = {
       min: 200,
       max: 2000
     },
+    paramTypes: {
+      target: 'select',
+      type: 'select',
+      speed: 'number',
+      min: 'number',
+      max: 'number'
+    },
     generate: (params) => {
-      // Modulation is typically applied as .lpf(sine.range(min, max).slow(speed))
       const modFunc = params.type === 'perlin' ? 'perlin' : 'sine';
       return `.${params.target}(${modFunc}.range(${params.min}, ${params.max}).slow(${params.speed}))`;
     }
@@ -90,6 +128,12 @@ const BLOCK_TYPES = {
     defaultParams: {
       type: 'stack',
       amount: 2
+    },
+    paramTypes: {
+      type: 'select',
+      amount: 'number',
+      n: 'number',
+      effect: 'text'
     },
     generate: (params) => {
       if (params.type === 'stack') {
@@ -104,19 +148,25 @@ const BLOCK_TYPES = {
   }
 };
 
-// Example patterns library
+// Drum-focused example patterns
 const EXAMPLE_PATTERNS = [
-  // Drum Patterns
+  // Drum Patterns - THE MOST IMPORTANT!
   {
-    name: 'Basic House Beat',
-    description: 'Classic 4/4 house kick pattern',
+    name: '4/4 Kick Pattern',
+    description: 'Standard four-on-the-floor',
     code: 's("bd ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~")',
     category: 'Drums'
   },
   {
-    name: 'Hip Hop Break',
-    description: 'Classic hip hop drum pattern',
+    name: 'Full Kit Pattern',
+    description: 'Complete drum kit pattern',
     code: 's("bd hh sn hh bd hh sn hh")',
+    category: 'Drums'
+  },
+  {
+    name: 'Kick + Snare',
+    description: 'Classic kick and snare',
+    code: 's("bd ~ sn ~ bd ~ sn ~")',
     category: 'Drums'
   },
   {
@@ -138,9 +188,39 @@ const EXAMPLE_PATTERNS = [
     category: 'Drums'
   },
   {
-    name: 'Shuffle Beat',
-    description: 'Swung shuffle rhythm',
-    code: 's("bd ~ sn ~ bd ~ sn ~").slow(0.75)',
+    name: 'Double Time',
+    description: 'Fast double-time pattern',
+    code: 's("bd bd sn ~ bd bd sn ~").fast(2)',
+    category: 'Drums'
+  },
+  {
+    name: '808 Pattern',
+    description: 'Classic 808 pattern',
+    code: 's("bd ~ ~ ~ bd ~ ~ sn ~ ~ bd ~ ~ ~ bd")',
+    category: 'Drums'
+  },
+  {
+    name: 'Hi-Hat Groove',
+    description: 'Hi-hat focused groove',
+    code: 's("~ hh ~ hh ~ hh*2 ~ hh").room(0.2)',
+    category: 'Drums'
+  },
+  {
+    name: 'Rolling Snare',
+    description: 'Snare roll pattern',
+    code: 's("~ ~ sn*4 ~ ~ ~ ~")',
+    category: 'Drums'
+  },
+  {
+    name: 'Open Hi-Hat Pattern',
+    description: 'Open hi-hat accents',
+    code: 's("bd ~ oh ~ sn ~ oh ~")',
+    category: 'Drums'
+  },
+  {
+    name: 'Cymbal Crash',
+    description: 'Crash cymbal accents',
+    code: 's("crash ~ ~ ~ ~ crash ~ ~")',
     category: 'Drums'
   },
   // Melodic Patterns
@@ -162,12 +242,6 @@ const EXAMPLE_PATTERNS = [
     code: 'n("<0 3 5 6 7 10 12>").scale("C4 blues")',
     category: 'Melody'
   },
-  {
-    name: 'Chromatic Walk',
-    description: 'Chromatic movement pattern',
-    code: 'n("<0 1 2 3 4 3 2 1>").scale("C4")',
-    category: 'Melody'
-  },
   // Arpeggiators
   {
     name: 'Major Arpeggio',
@@ -179,24 +253,6 @@ const EXAMPLE_PATTERNS = [
     name: 'Minor Arpeggio',
     description: 'Minor chord arpeggio pattern',
     code: 'n("0 3 7 12").scale("C4 minor").s("saw").lpf(1500)',
-    category: 'Arpeggiator'
-  },
-  {
-    name: 'Fast Arp',
-    description: 'Fast arpeggio sequence',
-    code: 'n("0 4 7 12 7 4").scale("C4 major").fast(2).s("sine")',
-    category: 'Arpeggiator'
-  },
-  {
-    name: 'Sus4 Arpeggio',
-    description: 'Suspended 4th arpeggio',
-    code: 'n("0 5 7 12").scale("C4 major").s("triangle")',
-    category: 'Arpeggiator'
-  },
-  {
-    name: 'Diminished Arp',
-    description: 'Diminished chord arpeggio',
-    code: 'n("0 3 6 9").scale("C4").fast(3).s("sine")',
     category: 'Arpeggiator'
   },
   // Chord Builders
@@ -212,30 +268,6 @@ const EXAMPLE_PATTERNS = [
     code: 'note("c4 eb4 g4").s("saw").lpf(3000).room(0.4)',
     category: 'Chords'
   },
-  {
-    name: '7th Chord',
-    description: 'Major 7th chord',
-    code: 'note("c4 e4 g4 b4").s("saw").lpf(2500).room(0.5)',
-    category: 'Chords'
-  },
-  {
-    name: 'Sus2 Chord',
-    description: 'Suspended 2nd chord',
-    code: 'note("c4 d4 g4").s("sine").room(0.6)',
-    category: 'Chords'
-  },
-  {
-    name: 'Power Chord',
-    description: 'Rock power chord',
-    code: 'note("c3 g3").s("saw").gain(1.2).lpf(1000)',
-    category: 'Chords'
-  },
-  {
-    name: 'Jazz Voicing',
-    description: 'Jazz chord voicing',
-    code: 'note("c4 e4 g4 b4 d5").s("sine").room(0.7).lpf(sine.range(2000, 8000).slow(4))',
-    category: 'Chords'
-  },
   // Bass Lines
   {
     name: 'Deep Bass',
@@ -244,21 +276,9 @@ const EXAMPLE_PATTERNS = [
     category: 'Bass'
   },
   {
-    name: 'Walking Bass',
-    description: 'Jazz walking bass line',
-    code: 'n("c2 d2 e2 f2 g2 f2 e2 d2").s("saw").lpf(500)',
-    category: 'Bass'
-  },
-  {
     name: '808 Bass',
     description: 'Classic 808 sub bass',
     code: 's("bd ~ ~ bd ~ ~ bd ~").lpf(200).gain(1.3)',
-    category: 'Bass'
-  },
-  {
-    name: 'Bass Arp',
-    description: 'Bass arpeggio pattern',
-    code: 'n("0 4 7").scale("C2 major").s("saw").lpf(400)',
     category: 'Bass'
   },
   // Synths
@@ -268,31 +288,7 @@ const EXAMPLE_PATTERNS = [
     code: 'note("<c e g b>").s("saw").lpf(sine.range(500, 5000).slow(4)).room(0.8)',
     category: 'Synth'
   },
-  {
-    name: 'PWM Lead',
-    description: 'Pulse width modulated lead',
-    code: 'note("c5 e5 g5").s("square").lpf(sine.range(1000, 8000).fast(2)).gain(0.8)',
-    category: 'Synth'
-  },
-  {
-    name: 'FM Bell',
-    description: 'FM synthesis bell sound',
-    code: 'note("c5").s("sine").lpf(perlin.range(2000, 12000).slow(8)).gain(0.6)',
-    category: 'Synth'
-  },
-  {
-    name: 'Bass Synth',
-    description: 'Analog-style bass synth',
-    code: 'note("c3").s("saw").lpf(400).gain(1.1)',
-    category: 'Synth'
-  },
-  // Effects & Experimental
-  {
-    name: 'Glitchy Pattern',
-    description: 'Experimental glitchy pattern',
-    code: 's("bd*2 ~ hh bd ~ hh ~ bd").sometimes(rev).sometimes(slow(2))',
-    category: 'Experimental'
-  },
+  // Effects
   {
     name: 'Reverb Wash',
     description: 'Heavy reverb effect',
@@ -303,36 +299,6 @@ const EXAMPLE_PATTERNS = [
     name: 'Filter Sweep',
     description: 'Automated filter sweep',
     code: 's("bd hh sn hh").lpf(sine.range(200, 8000).slow(4))',
-    category: 'Effects'
-  },
-  {
-    name: 'Stutter Effect',
-    description: 'Rhythmic stutter pattern',
-    code: 's("bd ~ sn ~").sometimes(fast(4)).sometimes(slow(0.5))',
-    category: 'Experimental'
-  },
-  {
-    name: 'Reverse Pattern',
-    description: 'Reversed pattern effect',
-    code: 's("bd hh sn hh").rev().room(0.5)',
-    category: 'Experimental'
-  },
-  {
-    name: 'Polyrhythm',
-    description: 'Complex polyrhythmic pattern',
-    code: 's("[bd hh] [~ sn] [bd ~] [hh sn]")',
-    category: 'Experimental'
-  },
-  {
-    name: 'Echo Delay',
-    description: 'Echo delay effect',
-    code: 'note("c4").s("sine").delay(0.25).gain(0.7)',
-    category: 'Effects'
-  },
-  {
-    name: 'Sidechain Pump',
-    description: 'Sidechain compression effect',
-    code: 's("bd ~ ~ ~").gain(sine.range(0.3, 1).slow(1))',
     category: 'Effects'
   }
 ];
@@ -623,8 +589,14 @@ function createBlock(type) {
   generateCodeFromBlocks();
 }
 
-// Render a block
+// Render a block with proper form controls
 function renderBlock(block) {
+  // Remove old block if exists
+  const oldBlock = document.getElementById(`block-${block.id}`);
+  if (oldBlock) {
+    oldBlock.remove();
+  }
+  
   const blockElement = document.createElement('div');
   blockElement.className = `block ${block.muted ? 'muted' : ''} ${block.disabled ? 'disabled' : ''}`;
   blockElement.id = `block-${block.id}`;
@@ -634,20 +606,59 @@ function renderBlock(block) {
   let paramsHTML = '';
   Object.keys(block.params).forEach(key => {
     const value = block.params[key];
-    paramsHTML += `
-      <div class="param-group">
-        <label class="param-label">${key}</label>
-        <input type="text" class="param-input" data-param="${key}" data-block="${block.id}" value="${value}">
-      </div>
-    `;
+    const paramType = blockType.paramTypes?.[key] || 'text';
+    const label = key.charAt(0).toUpperCase() + key.slice(1);
+    
+    if (paramType === 'select') {
+      // Determine which options to use
+      let options = [];
+      if (key === 'sample') {
+        options = PRESET_OPTIONS.drumSamples;
+      } else if (key === 'scale') {
+        options = PRESET_OPTIONS.scales;
+      } else if (key === 'wave') {
+        options = PRESET_OPTIONS.waves;
+      } else if (key === 'effect') {
+        options = PRESET_OPTIONS.effects;
+      } else if (key === 'type' && block.type === 'modulation') {
+        options = PRESET_OPTIONS.modulationTypes;
+      } else if (key === 'target' && block.type === 'modulation') {
+        options = PRESET_OPTIONS.modulationTargets;
+      } else if (key === 'type' && block.type === 'structure') {
+        options = ['stack', 'sometimes', 'every'];
+      }
+      
+      paramsHTML += `
+        <div class="param-group">
+          <label class="param-label">${label}</label>
+          <select class="param-select" data-param="${key}" data-block="${block.id}">
+            ${options.map(opt => `<option value="${opt}" ${opt === value ? 'selected' : ''}>${opt}</option>`).join('')}
+          </select>
+        </div>
+      `;
+    } else if (paramType === 'number') {
+      paramsHTML += `
+        <div class="param-group">
+          <label class="param-label">${label}</label>
+          <input type="number" class="param-input" data-param="${key}" data-block="${block.id}" value="${value}" step="0.1">
+        </div>
+      `;
+    } else {
+      paramsHTML += `
+        <div class="param-group">
+          <label class="param-label">${label}</label>
+          <input type="text" class="param-input" data-param="${key}" data-block="${block.id}" value="${value}">
+        </div>
+      `;
+    }
   });
   
   blockElement.innerHTML = `
     <div class="block-header">
       <div class="block-title">${blockType.icon} ${blockType.name}</div>
       <div class="block-controls">
-        <button class="block-control-btn mute-btn ${block.muted ? 'active' : ''}" data-block="${block.id}" title="${block.muted ? 'Unmute' : 'Mute'}">${block.muted ? '🔇' : '🔊'}</button>
-        <button class="block-control-btn enable-btn ${!block.disabled ? 'active' : ''}" data-block="${block.id}">✓</button>
+        <button class="block-control-btn mute-btn ${block.muted ? 'active' : ''}" data-block="${block.id}" data-muted="${block.muted}" title="${block.muted ? 'Unmute' : 'Mute'}">${block.muted ? '🔇' : '🔊'}</button>
+        <button class="block-control-btn enable-btn ${!block.disabled ? 'active' : ''}" data-block="${block.id}" data-enabled="${!block.disabled}">✓</button>
         <button class="block-control-btn delete-btn" data-block="${block.id}">🗑</button>
       </div>
     </div>
@@ -659,29 +670,40 @@ function renderBlock(block) {
   
   blocksContainer.appendChild(blockElement);
   
-  // Add event listeners
+  // Add event listeners - CRITICAL: use closure to capture the block reference
   const muteBtn = blockElement.querySelector('.mute-btn');
   const enableBtn = blockElement.querySelector('.enable-btn');
   const deleteBtn = blockElement.querySelector('.delete-btn');
-  const paramInputs = blockElement.querySelectorAll('.param-input');
+  const paramInputs = blockElement.querySelectorAll('.param-input, .param-select');
   
-  muteBtn.addEventListener('click', () => {
+  // FIXED: Proper mute/unmute with closure
+  muteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // Update the block object directly
     block.muted = !block.muted;
+    
+    // Update UI immediately
     muteBtn.classList.toggle('active');
     muteBtn.textContent = block.muted ? '🔇' : '🔊';
     muteBtn.title = block.muted ? 'Unmute' : 'Mute';
+    muteBtn.setAttribute('data-muted', block.muted);
     blockElement.classList.toggle('muted');
+    
+    // Regenerate code
     generateCodeFromBlocks();
   });
   
-  enableBtn.addEventListener('click', () => {
+  enableBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
     block.disabled = !block.disabled;
     enableBtn.classList.toggle('active');
+    enableBtn.setAttribute('data-enabled', !block.disabled);
     blockElement.classList.toggle('disabled');
     generateCodeFromBlocks();
   });
   
-  deleteBtn.addEventListener('click', () => {
+  deleteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
     blocks = blocks.filter(b => b.id !== block.id);
     blockElement.remove();
     generateCodeFromBlocks();
@@ -689,7 +711,7 @@ function renderBlock(block) {
   
   paramInputs.forEach(input => {
     input.addEventListener('change', () => {
-      block.params[input.dataset.param] = input.value;
+      block.params[input.dataset.param] = input.type === 'number' ? parseFloat(input.value) : input.value;
       const blockCode = blockElement.querySelector('.block-code');
       blockCode.textContent = blockType.generate(block.params);
       generateCodeFromBlocks();
@@ -794,8 +816,14 @@ function renderPresetExamples() {
     categories[pattern.category].push(pattern);
   });
   
-  // Create sections for each category
-  Object.keys(categories).sort().forEach(category => {
+  // Create sections for each category - DRUMS FIRST!
+  const sortedCategories = Object.keys(categories).sort((a, b) => {
+    if (a === 'Drums') return -1;
+    if (b === 'Drums') return 1;
+    return a.localeCompare(b);
+  });
+  
+  sortedCategories.forEach(category => {
     const categoryTitle = document.createElement('h4');
     categoryTitle.className = 'preset-category-title';
     categoryTitle.textContent = category;
@@ -932,4 +960,3 @@ document.querySelectorAll('.close').forEach(closeBtn => {
 initializeStrudel().then(() => {
   generateCodeFromBlocks();
 });
-
