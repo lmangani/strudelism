@@ -1487,9 +1487,12 @@ joinRoomBtn.addEventListener('click', () => {
   const name = userNameInput.value.trim();
   let roomName = roomIdInput.value.trim();
   
+  // If no name provided, generate one
   if (!name) {
-    alert('Please enter your name');
-    return;
+    userName = `Player${Math.floor(Math.random() * 1000)}`;
+    userNameInput.value = userName;
+  } else {
+    userName = name;
   }
   
   // If no room ID provided, generate one
@@ -1498,7 +1501,6 @@ joinRoomBtn.addEventListener('click', () => {
     roomIdInput.value = roomName;
   }
   
-  userName = name;
   roomId = roomName;
   
   // Update URL with room ID
@@ -1507,6 +1509,7 @@ joinRoomBtn.addEventListener('click', () => {
   // Trystero config - using IPFS (no signup required)
   // For production, consider Firebase or custom signaling server
   const config = {
+    appId: 'strudelism-multiplayer',
     announce: ['/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star']
   };
   
@@ -1549,6 +1552,7 @@ window.addEventListener('popstate', (event) => {
     roomIdInput.value = roomId;
     if (userName) {
       const config = {
+        appId: 'strudelism-multiplayer',
         announce: ['/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star']
       };
       initializeRoom(config);
@@ -1638,9 +1642,44 @@ if (shareRoomBtn) {
   shareRoomBtn.addEventListener('click', copyRoomURL);
 }
 
+// Auto-connect on page load
+async function autoConnect() {
+  // Read or generate room ID
+  readRoomIdFromURL();
+  
+  // Generate a default user name if not provided
+  if (!userName) {
+    userName = `Player${Math.floor(Math.random() * 1000)}`;
+    if (userNameInput) {
+      userNameInput.value = userName;
+    }
+  }
+  
+  // Auto-connect if we have a room ID
+  if (roomId && trystero) {
+    const config = {
+      appId: 'strudelism-multiplayer',
+      announce: ['/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star']
+    };
+    
+    try {
+      initializeRoom(config);
+      console.log('Auto-connected to room:', roomId);
+    } catch (error) {
+      console.warn('Auto-connect failed:', error);
+      // Don't show alert on auto-connect failure - user can manually connect
+    }
+  }
+}
+
 // Initialize
 readRoomIdFromURL();
-initializeP2P();
+initializeP2P().then(() => {
+  // Wait a bit for Trystero to fully initialize, then auto-connect
+  setTimeout(() => {
+    autoConnect();
+  }, 500);
+});
 initializeStrudel().then(() => {
   generateCodeFromBlocks();
   updateConnectionUI();
