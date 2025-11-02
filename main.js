@@ -433,7 +433,7 @@ async function initializeStrudel() {
       // Use the samples() function to ensure default samples are available
       // This loads default samples from Strudel's sample repository
       // Note: samples() is a side-effect function, so we wrap it to avoid pattern evaluation errors
-      await evaluate(`
+      evaluate(`
         (() => {
           samples({
             bd: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/bd/BT0A0D0.wav',
