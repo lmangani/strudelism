@@ -1,11 +1,21 @@
 // Strudel imports - will be loaded dynamically
 let initStrudel, evaluate, note, silence, hush, loadSamples;
 
+// P2P imports
+let trystero;
+
 // Initialize Strudel
 let strudelInitialized = false;
 let isPlaying = false;
 
-// Block management
+// Multi-player state
+let room = null;
+let peers = new Map(); // Map of peerId -> { name, blocks, code }
+let userName = '';
+let roomId = '';
+let isConnected = false;
+
+// Block management (local user's blocks)
 let blocks = [];
 let blockIdCounter = 0;
 
@@ -449,6 +459,16 @@ const presetExamplesList = document.getElementById('preset-examples-list');
 const docsContent = document.getElementById('docs-content');
 const blockSelectModal = document.getElementById('block-select-modal');
 const blockTypesList = document.getElementById('block-types-list');
+const connectBtn = document.getElementById('connect-btn');
+const connectModal = document.getElementById('connect-modal');
+const userNameInput = document.getElementById('user-name-input');
+const roomIdInput = document.getElementById('room-id-input');
+const joinRoomBtn = document.getElementById('join-room-btn');
+const createRoomBtn = document.getElementById('create-room-btn');
+const roomStatus = document.getElementById('room-status');
+const peerCount = document.getElementById('peer-count');
+const userNameDisplay = document.getElementById('user-name-display');
+const peersContainer = document.getElementById('peers-container');
 
 // Initialize Strudel
 async function initializeStrudel() {
@@ -672,13 +692,96 @@ function generateCodeFromBlocks() {
   
   codeEditor.value = code;
   
-  // Auto-evaluate if currently playing
-  if (isPlaying && strudelInitialized && evaluate && code.trim() && !code.startsWith('//')) {
-    try {
-      evaluate(code);
-    } catch (error) {
-      console.warn('Auto-evaluation failed:', error);
+  // Sync blocks with peers (but not the code itself)
+  if (isConnected && room) {
+    syncBlocksToPeers();
+  }
+  
+  // Generate and evaluate mixed code from all peers
+  if (isConnected) {
+    evaluateMixedCode();
+  } else {
+    // Single player mode - just evaluate local code
+    if (isPlaying && strudelInitialized && evaluate && code.trim() && !code.startsWith('//')) {
+      try {
+        evaluate(code);
+      } catch (error) {
+        console.warn('Auto-evaluation failed:', error);
+      }
     }
+  }
+}
+
+// Sync blocks to peers (without sharing code)
+function syncBlocksToPeers() {
+  if (!room || !room.actions || !room.actions.sendBlocks) return;
+  
+  // Send block metadata (not code) to peers
+  const blockData = blocks.map(b => ({
+    id: b.id,
+    type: b.type,
+    muted: b.muted,
+    disabled: b.disabled,
+    params: b.params
+  }));
+  
+  try {
+    room.actions.sendBlocks([blockData, userName]);
+  } catch (error) {
+    console.warn('Failed to sync blocks:', error);
+  }
+}
+
+// Generate mixed code from all peers
+function evaluateMixedCode() {
+  if (!isPlaying || !strudelInitialized || !evaluate) return;
+  
+  // Collect all active patterns from all peers
+  const allPatterns = [];
+  
+  // Add local patterns
+  const localActiveBlocks = blocks.filter(b => !b.disabled && !b.muted);
+  const localBaseBlocks = localActiveBlocks.filter(b => ['note', 'synth', 'sample'].includes(b.type));
+  localBaseBlocks.forEach(block => {
+    let patternCode = BLOCK_TYPES[block.type].generate(block.params);
+    // Apply local effects/modulations to local blocks
+    const localEffects = blocks.filter(b => b.type === 'effect' && !b.disabled && !b.muted);
+    localEffects.forEach(effectBlock => {
+      const effectCode = BLOCK_TYPES.effect.generate(effectBlock.params);
+      if (effectCode) patternCode += effectCode;
+    });
+    allPatterns.push(patternCode);
+  });
+  
+  // Add peer patterns
+  peers.forEach((peerData, peerId) => {
+    if (!peerData.blocks) return;
+    peerData.blocks.forEach(block => {
+      if (block.disabled || block.muted) return;
+      if (!['note', 'synth', 'sample'].includes(block.type)) return;
+      const patternCode = BLOCK_TYPES[block.type].generate(block.params);
+      allPatterns.push(patternCode);
+    });
+  });
+  
+  if (allPatterns.length === 0) return;
+  
+  // Mix all patterns together
+  let mixedCode = '';
+  if (allPatterns.length === 1) {
+    mixedCode = allPatterns[0];
+  } else {
+    mixedCode = `stack(\n  ${allPatterns.join(',\n  ')}\n)`;
+  }
+  
+  if (!mixedCode.includes('setcps')) {
+    mixedCode = 'setcps(1)\n' + mixedCode;
+  }
+  
+  try {
+    evaluate(mixedCode);
+  } catch (error) {
+    console.warn('Mixed code evaluation failed:', error);
   }
 }
 
@@ -1100,6 +1203,196 @@ loadPresetBtn.addEventListener('click', () => {
   }
 });
 
+
+// Initialize Trystero and P2P
+async function initializeP2P() {
+  try {
+    // Try IPFS first (no signup required)
+    const trysteroIPFS = await import('trystero/ipfs');
+    trystero = trysteroIPFS.joinRoom;
+    console.log('Trystero (IPFS) loaded successfully');
+  } catch (ipfsError) {
+    console.error('Failed to load Trystero IPFS:', ipfsError);
+    // Fallback to Firebase (requires config but more reliable)
+    try {
+      const trysteroFirebase = await import('trystero/firebase');
+      trystero = trysteroFirebase.joinRoom;
+      console.log('Trystero (Firebase) loaded successfully');
+    } catch (firebaseError) {
+      console.error('Failed to load Trystero Firebase:', firebaseError);
+      alert('P2P functionality unavailable. Please check your connection.');
+    }
+  }
+}
+
+// Initialize room connection
+function initializeRoom(config) {
+  if (!trystero) {
+    alert('Trystero not loaded. Please refresh the page.');
+    return;
+  }
+  
+  try {
+    room = trystero(config, roomId);
+    
+    // Create action for sending blocks
+    const [sendBlocks, getBlocks] = room.makeAction('blocks');
+    
+    // Store action for use in syncBlocksToPeers
+    room.actions = { sendBlocks };
+    
+    // Set up receive handler
+    getBlocks((data, peerId) => {
+      const [receivedBlocks, peerName] = data || [[], 'Unknown'];
+      console.log('Received blocks from:', peerName, peerId);
+      
+      if (!peers.has(peerId)) {
+        peers.set(peerId, { name: peerName, blocks: [], code: '' });
+        updatePeersDisplay();
+      }
+      peers.get(peerId).blocks = receivedBlocks;
+      peers.get(peerId).name = peerName; // Update name in case it changed
+      updatePeersDisplay();
+      
+      // Re-evaluate mixed code if playing
+      if (isPlaying) {
+        evaluateMixedCode();
+      }
+    });
+    
+    // Peer connection/disconnection handlers
+    room.onPeerJoin((peerId) => {
+      console.log('Peer joined:', peerId);
+      if (!peers.has(peerId)) {
+        peers.set(peerId, { name: 'Unknown', blocks: [], code: '' });
+      }
+      updatePeersDisplay();
+      
+      // Send our blocks to the new peer
+      setTimeout(() => syncBlocksToPeers(), 500);
+    });
+    
+    room.onPeerLeave((peerId) => {
+      console.log('Peer left:', peerId);
+      peers.delete(peerId);
+      updatePeersDisplay();
+      
+      // Re-evaluate if playing
+      if (isPlaying) {
+        evaluateMixedCode();
+      }
+    });
+    
+    // Send initial blocks on join
+    setTimeout(() => {
+      syncBlocksToPeers();
+    }, 1000);
+    
+    isConnected = true;
+    updateConnectionUI();
+    
+  } catch (error) {
+    console.error('Failed to initialize room:', error);
+    alert('Failed to connect to room: ' + error.message);
+  }
+}
+
+// Update connection UI
+function updateConnectionUI() {
+  if (isConnected) {
+    roomStatus.textContent = 'Connected';
+    roomStatus.classList.add('connected');
+    connectBtn.textContent = 'Disconnect';
+    peerCount.textContent = `${peers.size} peer${peers.size !== 1 ? 's' : ''}`;
+    userNameDisplay.textContent = userName || 'You';
+    userNameDisplay.style.display = 'inline-block';
+  } else {
+    roomStatus.textContent = 'Disconnected';
+    roomStatus.classList.remove('connected');
+    connectBtn.textContent = '🔗 Connect';
+    peerCount.textContent = '0 peers';
+    userNameDisplay.style.display = 'none';
+    peers.clear();
+    updatePeersDisplay();
+  }
+}
+
+// Update peers display
+function updatePeersDisplay() {
+  peersContainer.innerHTML = '';
+  
+  if (peers.size === 0) {
+    peersContainer.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.85rem; text-align: center; padding: 2rem;">No other players connected</p>';
+    peerCount.textContent = '0 peers';
+    return;
+  }
+  
+  peerCount.textContent = `${peers.size} peer${peers.size !== 1 ? 's' : ''}`;
+  
+  peers.forEach((peerData, peerId) => {
+    const card = document.createElement('div');
+    card.className = 'peer-card';
+    const blockCount = peerData.blocks ? peerData.blocks.filter(b => !b.disabled && !b.muted).length : 0;
+    card.innerHTML = `
+      <h4>${peerData.name || 'Unknown'}</h4>
+      <div class="peer-status">Active</div>
+      <div class="peer-blocks">${blockCount} active block${blockCount !== 1 ? 's' : ''}</div>
+    `;
+    peersContainer.appendChild(card);
+  });
+}
+
+// Connection event handlers
+connectBtn.addEventListener('click', () => {
+  if (isConnected) {
+    // Disconnect
+    if (room) {
+      room.leave();
+      room = null;
+    }
+    isConnected = false;
+    updateConnectionUI();
+  } else {
+    // Show connect modal
+    openModal(connectModal);
+    // Generate random room ID if empty
+    if (!roomIdInput.value) {
+      roomIdInput.value = Math.random().toString(36).substring(2, 9);
+    }
+  }
+});
+
+createRoomBtn.addEventListener('click', () => {
+  roomIdInput.value = Math.random().toString(36).substring(2, 9);
+});
+
+joinRoomBtn.addEventListener('click', () => {
+  const name = userNameInput.value.trim();
+  const roomName = roomIdInput.value.trim();
+  
+  if (!name) {
+    alert('Please enter your name');
+    return;
+  }
+  
+  if (!roomName) {
+    alert('Please enter a room ID');
+    return;
+  }
+  
+  userName = name;
+  roomId = roomName;
+  
+  // Trystero config - using IPFS (no signup required)
+  // For production, consider Firebase or custom signaling server
+  const config = {
+    announce: ['/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star']
+  };
+  
+  initializeRoom(config);
+  closeModal(connectModal);
+});
+
 // Close modals
 document.querySelectorAll('.close').forEach(closeBtn => {
   closeBtn.addEventListener('click', () => {
@@ -1109,7 +1402,7 @@ document.querySelectorAll('.close').forEach(closeBtn => {
 });
 
 // Close modals on outside click
-[presetModal, docsModal, blockSelectModal].forEach(modal => {
+[presetModal, docsModal, blockSelectModal, connectModal].forEach(modal => {
   modal.addEventListener('click', (e) => {
     if (e.target === modal) {
       closeModal(modal);
@@ -1118,6 +1411,8 @@ document.querySelectorAll('.close').forEach(closeBtn => {
 });
 
 // Initialize
+initializeP2P();
 initializeStrudel().then(() => {
   generateCodeFromBlocks();
+  updateConnectionUI();
 });

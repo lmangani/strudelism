@@ -9,7 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@strudel/web": "^1.2.5"
+    "@strudel/web": "^1.2.5",
+    "trystero": "^0.22.0"
   },
   "devDependencies": {
     "vite": "^7.1.12"

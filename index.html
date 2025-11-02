@@ -9,12 +9,17 @@
 <body>
   <div id="app">
     <header class="header">
-      <h1>🎵 Strudelism</h1>
+      <h1>🎵 Strudelism - Multi-Player</h1>
       <div class="header-controls">
+        <div class="session-info">
+          <span id="room-status" class="room-status">Disconnected</span>
+          <span id="peer-count" class="peer-count">0 peers</span>
+        </div>
+        <button id="connect-btn" class="btn btn-primary">🔗 Connect</button>
         <button id="play-btn" class="btn btn-primary">▶ Play</button>
         <button id="stop-btn" class="btn btn-secondary">⏹ Stop</button>
         <button id="clear-btn" class="btn btn-secondary">🗑 Clear</button>
-        <button id="preset-btn" class="btn btn-secondary">📥 Load Preset</button>
+        <button id="preset-btn" class="btn btn-secondary">📥 Presets</button>
         <button id="docs-btn" class="btn btn-secondary">📚 Examples</button>
       </div>
     </header>
@@ -22,8 +27,11 @@
     <div class="main-container">
       <div class="blocks-panel">
         <div class="panel-header">
-          <h2>Pattern Blocks</h2>
-          <button id="add-block-btn" class="btn btn-small">+ Add Block</button>
+          <h2>Your Blocks</h2>
+          <div>
+            <span id="user-name-display" class="user-name"></span>
+            <button id="add-block-btn" class="btn btn-small">+ Add Block</button>
+          </div>
         </div>
         <div id="blocks-container" class="blocks-container">
           <!-- Blocks will be added here -->
@@ -32,11 +40,20 @@
 
       <div class="repl-panel">
         <div class="panel-header">
-          <h2>Code Editor</h2>
+          <h2>Your Code</h2>
           <button id="update-code-btn" class="btn btn-small">🔄 Refresh</button>
         </div>
         <div id="repl-container" class="repl-container">
           <!-- REPL will be embedded here -->
+        </div>
+      </div>
+
+      <div class="peers-panel">
+        <div class="panel-header">
+          <h2>Active Players</h2>
+        </div>
+        <div id="peers-container" class="peers-container">
+          <!-- Peer information will be shown here -->
         </div>
       </div>
     </div>
@@ -73,6 +90,27 @@
         <span class="close">&times;</span>
         <h2>Add Block</h2>
         <div id="block-types-list" class="block-types-list"></div>
+      </div>
+    </div>
+
+    <!-- Connection Modal -->
+    <div id="connect-modal" class="modal">
+      <div class="modal-content">
+        <span class="close">&times;</span>
+        <h2>Join/Create Session</h2>
+        <div class="connect-input-group">
+          <label>Your Name:</label>
+          <input type="text" id="user-name-input" placeholder="Enter your name" maxlength="20">
+        </div>
+        <div class="connect-input-group">
+          <label>Room ID:</label>
+          <input type="text" id="room-id-input" placeholder="Enter or create room ID">
+          <small>Share this room ID with other players</small>
+        </div>
+        <div class="connect-input-group">
+          <button id="join-room-btn" class="btn btn-primary">Join Session</button>
+          <button id="create-room-btn" class="btn btn-secondary">Create New Room</button>
+        </div>
       </div>
     </div>
   </div>
