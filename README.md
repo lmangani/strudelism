@@ -1,18 +1,31 @@
-# 🎵 Strudelism
+# 🎵 Strudelism - Multi-Player Collaborative Strudel Host
 
-A beautiful web-based UI for live Strudel performances. Enable performers to create, modify, mute, and control Strudel blocks visually without writing code (unless they want to).
+A web-based live coding environment for [Strudel](https://strudel.cc/) that enables **real-time collaborative music creation** with multiple composers using peer-to-peer (P2P) synchronization.
 
-## Features
+## 🌟 Features
 
-- **Block-Based Interface**: Create musical patterns using visual blocks instead of typing code
-- **Live Performance Controls**: Mute, enable, disable, and modify blocks in real-time
-- **Embedded REPL**: View and edit the generated Strudel code directly
-- **Preset System**: Load patterns from GitHub/Gist URLs
-- **Comprehensive Examples**: Built-in examples covering all Strudel functionalities
-- **Documentation**: Built-in documentation to inspire performers
-- **Static Web App**: No server required - works entirely client-side
+### Multi-Player Collaboration
+- **P2P Synchronization**: Real-time collaboration using WebRTC via Trystero
+- **Room-Based Sessions**: Join or create sessions with unique room IDs
+- **URL Sharing**: Share room URLs for instant invites - room ID auto-added to URL
+- **Private Code Blocks**: Each player has their own code editor - code stays private
+- **Automatic Pattern Mixing**: Patterns from all players are automatically mixed together
+- **Real-Time Code Sync**: Direct code editing syncs to all peers instantly (with debouncing)
 
-## Getting Started
+### Live Coding Interface
+- **Block-Based UI**: Add, modify, mute, and enable Strudel blocks without typing code
+- **Quick Presets**: One-click drum kits (Kick, Snare, Hi-Hat, Full Kit, House Beat, Breakbeat)
+- **Embedded REPL**: Direct code editing for advanced users
+- **Auto-Evaluation**: Code automatically evaluates when blocks change (if playing)
+- **Comprehensive Examples**: Drum patterns, melodies, arpeggiators, chords, bass lines, synths, and effects
+
+### Strudel Integration
+- **Full Strudel Support**: All Strudel functions and patterns
+- **Sample Loading**: Built-in drum samples from Tidal Cycles Dirt-Samples
+- **Effects & Modulation**: Reverb, delay, filters, gain, and modulation
+- **Scales & Patterns**: Support for all Strudel scales and mini-notation
+
+## 🚀 Quick Start
 
 ### Installation
 
@@ -26,191 +39,153 @@ npm install
 npm run dev
 ```
 
-This will start a development server at `http://localhost:3000`
-
 ### Build
 
 ```bash
 npm run build
 ```
 
-The built files will be in the `dist` directory, ready for static hosting.
+## 🎮 Usage
 
-## Usage
+### Single Player Mode
 
-### Adding Blocks
+1. Open the app in your browser
+2. Click **"+ Add Block"** to create pattern blocks
+3. Use **Quick Presets** for instant drum kits
+4. Modify blocks using the UI controls
+5. Click **"▶ Play"** to hear your patterns
+6. Edit code directly in the **Code Editor** for advanced patterns
 
-1. Click the "+ Add Block" button
-2. Select a block type from the modal:
-   - **Note Pattern**: Create melodic patterns with scales
-   - **Sample**: Play audio samples
-   - **Synth**: Generate sounds with waveforms
-   - **Effect**: Apply audio effects (reverb, delay, filters, etc.)
-   - **Modulation**: Modulate parameters with functions
-   - **Structure**: Control pattern structure (stack, sometimes, every)
+### Multi-Player Mode
 
-### Block Controls
+1. Click **"🔗 Connect"** in the header
+2. Enter your name and a room ID (or use auto-generated one)
+3. Click **"Join Session"**
+4. Share the room URL with other players (room ID is in the URL)
+5. Each player can:
+   - Build their own blocks (private to them)
+   - Edit code directly (syncs to peers)
+   - See active peers in the **Active Players** panel
+6. Click **"▶ Play"** - all players' patterns will mix together automatically!
 
-Each block has three controls:
-- **Mute (🔇)**: Temporarily disable the block without removing it
-- **Enable (✓)**: Toggle block on/off
-- **Delete (🗑)**: Remove the block completely
+### Quick Presets
 
-### Editing Blocks
+- **Kick**: Add a kick drum block
+- **Snare**: Add a snare block  
+- **Hi-Hat**: Add a hi-hat block
+- **Full Kit**: Add kick + snare + hi-hat (3 blocks)
+- **House Beat**: Add kick + hi-hat pattern (2 blocks)
+- **Breakbeat**: Add kick + snare + hi-hat breakbeat (3 blocks)
 
-- Click on any parameter field to edit it
-- Changes are automatically reflected in the code editor
-- The code updates in real-time as you modify blocks
+### Block Types
 
-### Code Editor
+- **Note Pattern**: Melodic patterns with scales
+- **Drum Sample**: Sample-based drum patterns
+- **Synth**: Synthesizer with waveform options
+- **Effect**: Reverb, delay, filters, gain
+- **Modulation**: Animated parameter changes
+- **Structure**: Pattern transformations (stack, sometimes, every)
 
-- The REPL panel shows the generated Strudel code
-- You can edit the code directly if you want more control
-- Click "Evaluate" to play the code
-- Click "Refresh" to regenerate code from blocks
+## 🏗️ Architecture
 
-### Loading Presets
+### P2P Communication
+- **Library**: [Trystero](https://github.com/dmotz/trystero) for WebRTC signaling
+- **Strategy**: IPFS (no signup required) with Firebase fallback
+- **Data Sync**:
+  - Block metadata (type, params, mute state) - no code shared
+  - Custom code (when players edit code directly)
+  - Both sync separately for flexibility
 
-1. Click "📥 Load Preset"
-2. Enter a GitHub or Gist URL containing a JSON preset file
-3. Or choose from the built-in examples
+### Pattern Mixing
+- **Block Mode**: Combines all players' blocks using `stack()`
+- **Code Mode**: Combines custom code from all players
+- **Auto-Detection**: Automatically detects which mode players are using
+- **Real-Time**: Updates automatically when any player changes blocks or code
 
-#### Preset Format
+### URL Management
+- **Auto-Generation**: Room ID automatically created if none in URL
+- **URL Sharing**: Room ID stored in URL query parameter (`?room=abc123`)
+- **Browser Navigation**: Handles back/forward buttons
+- **One-Click Copy**: "Share Room" button copies full URL to clipboard
 
-Presets should be JSON files with the following format:
+## 📦 Dependencies
 
-```json
-{
-  "blocks": [
-    {
-      "type": "note",
-      "muted": false,
-      "disabled": false,
-      "params": {
-        "pattern": "<c e g>",
-        "scale": "major",
-        "octave": 4
-      }
-    }
-  ]
-}
+- **@strudel/web**: Strudel audio programming language
+- **trystero**: P2P WebRTC synchronization
+- **vite**: Build tool and dev server
+
+## 🔧 Configuration
+
+### P2P Signaling
+
+The app uses IPFS by default (no configuration needed). For production, you can configure Firebase:
+
+```javascript
+// In main.js, update initializeRoom() config
+const config = {
+  // Firebase config
+  firebaseApp: firebase.initializeApp({ /* your config */ })
+};
 ```
 
-#### Example Preset URLs
+## 🚢 Deployment
 
-- GitHub raw URL: `https://raw.githubusercontent.com/username/repo/main/preset.json`
-- Gist URL: `https://gist.githubusercontent.com/username/gist-id/raw`
+The app is static and can be deployed to:
+- GitHub Pages (configured with GitHub Actions)
+- Netlify
+- Vercel
+- Any static hosting service
 
-### Examples & Documentation
+See `DEPLOY.md` for detailed deployment instructions.
 
-Click "📚 Examples" to view:
-- Comprehensive documentation for all Strudel features
-- Code examples for each functionality
-- Inspiration for creating patterns
+## 🎯 Use Cases
 
-## Block Types
+- **Live Performances**: Multiple composers playing together
+- **Collaborative Jams**: Real-time musical collaboration
+- **Learning**: Experiment with Strudel patterns with others
+- **Remote Sessions**: Collaborate over the internet
+- **Live Coding Shows**: Multiple performers in sync
 
-### Note Pattern
-Creates melodic patterns with musical scales.
+## 🔒 Privacy
 
-**Parameters:**
-- `pattern`: Mini-notation pattern (e.g., "<c e g>")
-- `scale`: Scale name (e.g., "major", "minor")
-- `octave`: Octave number (default: 4)
+- **No Server Required**: All communication is peer-to-peer
+- **Private Code**: Your code blocks and custom code are not shared (only patterns are mixed)
+- **Encrypted**: Trystero uses end-to-end encryption for P2P connections
+- **No Data Collection**: No analytics, no tracking, no data stored
 
-### Sample
-Plays audio samples.
+## 🐛 Troubleshooting
 
-**Parameters:**
-- `sample`: Sample name (e.g., "bd", "sn", "hh")
-- `pattern`: Trigger pattern (e.g., "x ~ x ~")
+### Connection Issues
+- **Can't connect**: Check that IPFS signaling server is accessible
+- **Peers not showing**: Ensure all players use the same room ID
+- **No sound**: Check browser permissions for audio
 
-### Synth
-Generates sounds using waveforms.
+### Code Sync Issues
+- **Code not syncing**: Wait 500ms after typing (debouncing)
+- **Patterns not mixing**: Ensure players are connected and have active blocks/code
 
-**Parameters:**
-- `pattern`: Note pattern
-- `wave`: Waveform type (sine, saw, square, triangle)
-- `octave`: Octave number
+### Sample Loading
+- **Samples not found**: Samples load automatically on startup
+- **Missing sounds**: Check console for sample loading errors
 
-### Effect
-Applies audio effects to patterns.
-
-**Parameters:**
-- `effect`: Effect type (reverb, delay, lpf, hpf, gain)
-- Additional parameters vary by effect type
-
-### Modulation
-Modulates parameters using functions.
-
-**Parameters:**
-- `type`: Modulation function (sine, saw, perlin)
-- `speed`: Modulation speed
-- `range`: Value range (e.g., "0.5 1")
-
-### Structure
-Controls pattern structure and timing.
-
-**Parameters:**
-- `type`: Structure type (stack, sometimes, every)
-- Additional parameters vary by type
-
-## Keyboard Shortcuts
-
-- `Space`: Play/Pause (coming soon)
-- `S`: Stop (coming soon)
-
-## Browser Support
-
-- Modern browsers with ES6 support
-- Chrome/Edge (recommended)
-- Firefox
-- Safari
-
-## Deployment
-
-### GitHub Pages
-
-This project is configured for automatic deployment to GitHub Pages via GitHub Actions.
-
-1. **Enable GitHub Pages:**
-   - Go to your repository Settings → Pages
-   - Under "Source", select "GitHub Actions"
-   - The workflow will automatically deploy on pushes to `main`
-
-2. **Automatic Deployment:**
-   - Push to the `main` branch
-   - GitHub Actions will build and deploy automatically
-   - Your site will be available at `https://yourusername.github.io/strudelism/`
-
-3. **Manual Deployment:**
-   - You can also trigger deployment manually via the Actions tab → "Deploy to GitHub Pages" → "Run workflow"
-
-### Other Static Hosting
-
-The `dist/` folder can be deployed to any static hosting service:
-- **Netlify:** Drag and drop the `dist/` folder or connect your Git repository
-- **Vercel:** `vercel --prod` or connect via Git
-- **Cloudflare Pages:** Connect repository or upload `dist/` folder
-
-## License
-
-This project is licensed under the AGPL-3.0 license, same as Strudel.
-
-## Credits
-
-Built with:
-- [Strudel](https://strudel.cc/) - The live coding environment
-- [Vite](https://vitejs.dev/) - Build tool
-- [@strudel/web](https://www.npmjs.com/package/@strudel/web) - Strudel web package
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## Resources
+## 📚 Resources
 
 - [Strudel Documentation](https://strudel.cc/)
-- [Strudel on GitHub](https://github.com/tidalcycles/strudel)
-- [Strudel Technical Manual](https://strudel.cc/technical-manual/project-start/)
+- [Trystero Documentation](https://github.com/dmotz/trystero)
+- [Tidal Cycles Patterns](https://tidalcycles.org/)
 
+## 🤝 Contributing
+
+Contributions welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+## 📝 License
+
+MIT License - feel free to use and modify as needed.
+
+---
+
+**Built with ❤️ for the live coding community**
