@@ -106,12 +106,44 @@ const BLOCK_TYPES = {
 
 // Example patterns library
 const EXAMPLE_PATTERNS = [
+  // Drum Patterns
   {
-    name: 'Basic Beat',
-    description: 'Simple kick and snare pattern',
-    code: 's("bd ~ ~ bd ~ ~ bd ~ sn ~ ~ ~ ~ sn ~ ~ ~")',
+    name: 'Basic House Beat',
+    description: 'Classic 4/4 house kick pattern',
+    code: 's("bd ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~")',
     category: 'Drums'
   },
+  {
+    name: 'Hip Hop Break',
+    description: 'Classic hip hop drum pattern',
+    code: 's("bd hh sn hh bd hh sn hh")',
+    category: 'Drums'
+  },
+  {
+    name: 'Breakbeat',
+    description: 'Amen-style breakbeat',
+    code: 's("bd*2 ~ sn bd ~ sn ~ bd").fast(2).room(0.3)',
+    category: 'Drums'
+  },
+  {
+    name: 'Techno Kick',
+    description: 'Driving techno pattern',
+    code: 's("bd ~ bd ~ bd ~ bd ~").gain(1.1)',
+    category: 'Drums'
+  },
+  {
+    name: 'Jungle Breaks',
+    description: 'Fast jungle break pattern',
+    code: 's("bd*2 ~ sn ~ hh*2 sn ~ bd").fast(4).room(0.5)',
+    category: 'Drums'
+  },
+  {
+    name: 'Shuffle Beat',
+    description: 'Swung shuffle rhythm',
+    code: 's("bd ~ sn ~ bd ~ sn ~").slow(0.75)',
+    category: 'Drums'
+  },
+  // Melodic Patterns
   {
     name: 'Melodic Scale',
     description: 'Ascending scale pattern',
@@ -119,11 +151,142 @@ const EXAMPLE_PATTERNS = [
     category: 'Melody'
   },
   {
+    name: 'Pentatonic Melody',
+    description: 'Pentatonic scale melody',
+    code: 'n("<0 2 4 7 9 7 4 2>").scale("C4 pentatonic")',
+    category: 'Melody'
+  },
+  {
+    name: 'Blues Scale',
+    description: 'Classic blues scale pattern',
+    code: 'n("<0 3 5 6 7 10 12>").scale("C4 blues")',
+    category: 'Melody'
+  },
+  {
+    name: 'Chromatic Walk',
+    description: 'Chromatic movement pattern',
+    code: 'n("<0 1 2 3 4 3 2 1>").scale("C4")',
+    category: 'Melody'
+  },
+  // Arpeggiators
+  {
+    name: 'Major Arpeggio',
+    description: 'Upward major chord arpeggio',
+    code: 'n("0 4 7 12").scale("C4 major").s("sine").lpf(2000)',
+    category: 'Arpeggiator'
+  },
+  {
+    name: 'Minor Arpeggio',
+    description: 'Minor chord arpeggio pattern',
+    code: 'n("0 3 7 12").scale("C4 minor").s("saw").lpf(1500)',
+    category: 'Arpeggiator'
+  },
+  {
+    name: 'Fast Arp',
+    description: 'Fast arpeggio sequence',
+    code: 'n("0 4 7 12 7 4").scale("C4 major").fast(2).s("sine")',
+    category: 'Arpeggiator'
+  },
+  {
+    name: 'Sus4 Arpeggio',
+    description: 'Suspended 4th arpeggio',
+    code: 'n("0 5 7 12").scale("C4 major").s("triangle")',
+    category: 'Arpeggiator'
+  },
+  {
+    name: 'Diminished Arp',
+    description: 'Diminished chord arpeggio',
+    code: 'n("0 3 6 9").scale("C4").fast(3).s("sine")',
+    category: 'Arpeggiator'
+  },
+  // Chord Builders
+  {
+    name: 'Major Triad',
+    description: 'C major triad',
+    code: 'note("c4 e4 g4").s("saw").lpf(3000).room(0.4)',
+    category: 'Chords'
+  },
+  {
+    name: 'Minor Triad',
+    description: 'C minor triad',
+    code: 'note("c4 eb4 g4").s("saw").lpf(3000).room(0.4)',
+    category: 'Chords'
+  },
+  {
+    name: '7th Chord',
+    description: 'Major 7th chord',
+    code: 'note("c4 e4 g4 b4").s("saw").lpf(2500).room(0.5)',
+    category: 'Chords'
+  },
+  {
+    name: 'Sus2 Chord',
+    description: 'Suspended 2nd chord',
+    code: 'note("c4 d4 g4").s("sine").room(0.6)',
+    category: 'Chords'
+  },
+  {
+    name: 'Power Chord',
+    description: 'Rock power chord',
+    code: 'note("c3 g3").s("saw").gain(1.2).lpf(1000)',
+    category: 'Chords'
+  },
+  {
+    name: 'Jazz Voicing',
+    description: 'Jazz chord voicing',
+    code: 'note("c4 e4 g4 b4 d5").s("sine").room(0.7).lpf(sine.range(2000, 8000).slow(4))',
+    category: 'Chords'
+  },
+  // Bass Lines
+  {
+    name: 'Deep Bass',
+    description: 'Deep sub bass pattern',
+    code: 'n("c2 ~ c2 ~ eb2 ~ c2 ~").s("saw").lpf(300).gain(1.2)',
+    category: 'Bass'
+  },
+  {
+    name: 'Walking Bass',
+    description: 'Jazz walking bass line',
+    code: 'n("c2 d2 e2 f2 g2 f2 e2 d2").s("saw").lpf(500)',
+    category: 'Bass'
+  },
+  {
+    name: '808 Bass',
+    description: 'Classic 808 sub bass',
+    code: 's("bd ~ ~ bd ~ ~ bd ~").lpf(200).gain(1.3)',
+    category: 'Bass'
+  },
+  {
+    name: 'Bass Arp',
+    description: 'Bass arpeggio pattern',
+    code: 'n("0 4 7").scale("C2 major").s("saw").lpf(400)',
+    category: 'Bass'
+  },
+  // Synths
+  {
     name: 'Ambient Pad',
     description: 'Slow ambient synth pad',
     code: 'note("<c e g b>").s("saw").lpf(sine.range(500, 5000).slow(4)).room(0.8)',
     category: 'Synth'
   },
+  {
+    name: 'PWM Lead',
+    description: 'Pulse width modulated lead',
+    code: 'note("c5 e5 g5").s("square").lpf(sine.range(1000, 8000).fast(2)).gain(0.8)',
+    category: 'Synth'
+  },
+  {
+    name: 'FM Bell',
+    description: 'FM synthesis bell sound',
+    code: 'note("c5").s("sine").lpf(perlin.range(2000, 12000).slow(8)).gain(0.6)',
+    category: 'Synth'
+  },
+  {
+    name: 'Bass Synth',
+    description: 'Analog-style bass synth',
+    code: 'note("c3").s("saw").lpf(400).gain(1.1)',
+    category: 'Synth'
+  },
+  // Effects & Experimental
   {
     name: 'Glitchy Pattern',
     description: 'Experimental glitchy pattern',
@@ -131,15 +294,45 @@ const EXAMPLE_PATTERNS = [
     category: 'Experimental'
   },
   {
-    name: 'Bass Line',
-    description: 'Deep bass pattern',
-    code: 'n("<c2 ~ c2 ~ eb2 ~ c2 ~>").s("saw").lpf(300).gain(1.2)',
-    category: 'Bass'
-  },
-  {
     name: 'Reverb Wash',
     description: 'Heavy reverb effect',
     code: 'note("c4").s("sine").gain(sine.range(0.2, 0.8).slow(8)).room(2)',
+    category: 'Effects'
+  },
+  {
+    name: 'Filter Sweep',
+    description: 'Automated filter sweep',
+    code: 's("bd hh sn hh").lpf(sine.range(200, 8000).slow(4))',
+    category: 'Effects'
+  },
+  {
+    name: 'Stutter Effect',
+    description: 'Rhythmic stutter pattern',
+    code: 's("bd ~ sn ~").sometimes(fast(4)).sometimes(slow(0.5))',
+    category: 'Experimental'
+  },
+  {
+    name: 'Reverse Pattern',
+    description: 'Reversed pattern effect',
+    code: 's("bd hh sn hh").rev().room(0.5)',
+    category: 'Experimental'
+  },
+  {
+    name: 'Polyrhythm',
+    description: 'Complex polyrhythmic pattern',
+    code: 's("[bd hh] [~ sn] [bd ~] [hh sn]")',
+    category: 'Experimental'
+  },
+  {
+    name: 'Echo Delay',
+    description: 'Echo delay effect',
+    code: 'note("c4").s("sine").delay(0.25).gain(0.7)',
+    category: 'Effects'
+  },
+  {
+    name: 'Sidechain Pump',
+    description: 'Sidechain compression effect',
+    code: 's("bd ~ ~ ~").gain(sine.range(0.3, 1).slow(1))',
     category: 'Effects'
   }
 ];
@@ -453,7 +646,7 @@ function renderBlock(block) {
     <div class="block-header">
       <div class="block-title">${blockType.icon} ${blockType.name}</div>
       <div class="block-controls">
-        <button class="block-control-btn mute-btn ${block.muted ? 'active' : ''}" data-block="${block.id}">🔇</button>
+        <button class="block-control-btn mute-btn ${block.muted ? 'active' : ''}" data-block="${block.id}" title="${block.muted ? 'Unmute' : 'Mute'}">${block.muted ? '🔇' : '🔊'}</button>
         <button class="block-control-btn enable-btn ${!block.disabled ? 'active' : ''}" data-block="${block.id}">✓</button>
         <button class="block-control-btn delete-btn" data-block="${block.id}">🗑</button>
       </div>
@@ -475,6 +668,8 @@ function renderBlock(block) {
   muteBtn.addEventListener('click', () => {
     block.muted = !block.muted;
     muteBtn.classList.toggle('active');
+    muteBtn.textContent = block.muted ? '🔇' : '🔊';
+    muteBtn.title = block.muted ? 'Unmute' : 'Mute';
     blockElement.classList.toggle('muted');
     generateCodeFromBlocks();
   });
@@ -590,24 +785,41 @@ function renderBlockTypes() {
 function renderPresetExamples() {
   presetExamplesList.innerHTML = '';
   
+  // Group patterns by category
+  const categories = {};
   EXAMPLE_PATTERNS.forEach(pattern => {
-    const card = document.createElement('div');
-    card.className = 'preset-example-card';
-    card.innerHTML = `
-      <h4>${pattern.name}</h4>
-      <p>${pattern.description}</p>
-      <small>Category: ${pattern.category}</small>
-    `;
+    if (!categories[pattern.category]) {
+      categories[pattern.category] = [];
+    }
+    categories[pattern.category].push(pattern);
+  });
+  
+  // Create sections for each category
+  Object.keys(categories).sort().forEach(category => {
+    const categoryTitle = document.createElement('h4');
+    categoryTitle.className = 'preset-category-title';
+    categoryTitle.textContent = category;
+    categoryTitle.style.cssText = 'grid-column: 1 / -1; margin-top: 1rem; margin-bottom: 0.5rem; font-size: 0.9rem; color: var(--accent-primary); font-weight: 600;';
+    presetExamplesList.appendChild(categoryTitle);
     
-    card.addEventListener('click', () => {
-      const codeEditor = document.getElementById('code-editor');
-      if (codeEditor) {
-        codeEditor.value = pattern.code;
-      }
-      closeModal(presetModal);
+    categories[category].forEach(pattern => {
+      const card = document.createElement('div');
+      card.className = 'preset-example-card';
+      card.innerHTML = `
+        <h4>${pattern.name}</h4>
+        <p>${pattern.description}</p>
+      `;
+      
+      card.addEventListener('click', () => {
+        const codeEditor = document.getElementById('code-editor');
+        if (codeEditor) {
+          codeEditor.value = pattern.code;
+        }
+        closeModal(presetModal);
+      });
+      
+      presetExamplesList.appendChild(card);
     });
-    
-    presetExamplesList.appendChild(card);
   });
 }
 
