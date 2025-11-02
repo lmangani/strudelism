@@ -1214,9 +1214,18 @@ playBtn.addEventListener('click', async () => {
   }
   
   // In multiplayer, only host can control playback
+  // But allow if we're alone (we're automatically host then)
   if (isConnected && !isHost) {
-    alert('Only the session host can control playback. The host is currently playing.');
-    return;
+    // Double-check: if we're alone, we should be host
+    if (peers.size === 0) {
+      isHost = true;
+      hostPeerId = room.selfId;
+      updateConnectionUI();
+      console.log('Auto-promoted to host (we are alone)');
+    } else {
+      alert('Only the session host can control playback.');
+      return;
+    }
   }
   
   const codeEditor = document.getElementById('code-editor');
@@ -1425,30 +1434,49 @@ function initializeRoom(config) {
     
     // Set up play state receive handler (for host control)
     getPlayState((data, peerId) => {
-      const [playState, isHostPlayer, hostId] = data || [false, false, null];
-      console.log('Received play state from:', peerId, 'playing:', playState, 'isHost:', isHostPlayer);
+      const [playState, senderIsHost, hostId] = data || [false, false, null];
+      console.log('Received play state from:', peerId, 'playing:', playState, 'senderIsHost:', senderIsHost, 'hostId:', hostId);
       
-      if (isHostPlayer && hostId) {
+      // Update host info if provided
+      if (hostId) {
         hostPeerId = hostId;
         isHost = (hostId === room.selfId);
-        
-        if (playState && isHost) {
-          // Host should evaluate mixed code
-          isPlaying = true;
-          playBtn.textContent = '⏸ Pause';
-          evaluateMixedCode();
-        } else if (!playState && isHost) {
+        updateConnectionUI();
+      }
+      
+      // Only react to play state from the actual host
+      if (senderIsHost && hostId === hostPeerId) {
+        if (playState) {
+          // Host started playing
+          if (isHost) {
+            // We are the host - evaluate mixed code (if not already playing)
+            if (!isPlaying) {
+              isPlaying = true;
+              playBtn.textContent = '⏸ Pause';
+              evaluateMixedCode();
+            }
+          } else {
+            // We're not host - just update UI, don't play locally
+            playBtn.textContent = '⏸ Pause (Host Playing)';
+            // Make sure we're not playing locally
+            if (isPlaying && hush) hush();
+            else if (isPlaying && evaluate) evaluate('hush()');
+            isPlaying = false;
+          }
+        } else {
           // Host stopped
           isPlaying = false;
           playBtn.textContent = '▶ Play';
-          if (hush) hush();
-          else if (evaluate) evaluate('hush()');
-        } else if (!isHost && isPlaying) {
-          // Remote player - stop local playback when host stops
-          isPlaying = false;
-          playBtn.textContent = '▶ Play';
-          if (hush) hush();
-          else if (evaluate) evaluate('hush()');
+          if (isHost) {
+            // We're host, stop playback
+            if (hush) hush();
+            else if (evaluate) evaluate('hush()');
+          } else {
+            // Remote player - just update UI
+            // (shouldn't be playing locally anyway)
+            if (hush) hush();
+            else if (evaluate) evaluate('hush()');
+          }
         }
       }
     });
@@ -1461,10 +1489,14 @@ function initializeRoom(config) {
       }
       updatePeersDisplay();
       
-      // If we're the first one or become host, claim host role
-      if (peers.size === 0) {
+      // Determine host: first person in room is host
+      // If we were alone, we're already host. Otherwise, check if we're first.
+      if (!hostPeerId) {
+        // We're the first one - we're the host
         isHost = true;
         hostPeerId = room.selfId;
+        console.log('We are the host (first in room)');
+        updateConnectionUI();
       }
       
       // Send our blocks and code to the new peer
@@ -1499,8 +1531,23 @@ function initializeRoom(config) {
       }
     });
     
-    // Send initial blocks and code on join
+    // When we first join, check if we're alone (then we're host)
+    // Or if there are already peers (then first peer is host)
     setTimeout(() => {
+      // Get current peer count (including ourselves)
+      const currentPeers = peers.size;
+      
+      if (currentPeers === 0) {
+        // We're alone - we're the host
+        isHost = true;
+        hostPeerId = room.selfId;
+        console.log('We are the host (alone in room)');
+      }
+      // If there are peers, wait for peerJoin event to determine host
+      
+      updateConnectionUI();
+      
+      // Send our blocks and code
       syncBlocksToPeers();
       syncCodeToPeers();
     }, 1000);
@@ -1774,8 +1821,14 @@ async function autoConnect() {
     }
   }
   
+  // Wait for Trystero to be ready
+  if (!trystero) {
+    console.log('Waiting for Trystero to load...');
+    return;
+  }
+  
   // Auto-connect if we have a room ID
-  if (roomId && trystero) {
+  if (roomId) {
     const config = {
       appId: 'strudelism-multiplayer'
     };
@@ -1787,18 +1840,26 @@ async function autoConnect() {
       console.warn('Auto-connect failed:', error);
       // Don't show alert on auto-connect failure - user can manually connect
     }
+  } else {
+    console.log('No room ID found, user can connect manually');
   }
 }
 
 // Initialize
 readRoomIdFromURL();
-initializeP2P().then(() => {
-  // Wait a bit for Trystero to fully initialize, then auto-connect
-  setTimeout(() => {
-    autoConnect();
-  }, 500);
-});
-initializeStrudel().then(() => {
+
+// Initialize P2P and Strudel in parallel, then auto-connect
+Promise.all([
+  initializeP2P(),
+  initializeStrudel()
+]).then(() => {
   generateCodeFromBlocks();
   updateConnectionUI();
+  
+  // Auto-connect after everything is ready
+  setTimeout(() => {
+    autoConnect();
+  }, 1000); // Give it a moment for everything to settle
+}).catch(error => {
+  console.error('Initialization error:', error);
 });
