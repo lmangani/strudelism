@@ -427,34 +427,38 @@ async function initializeStrudel() {
     
     await initStrudel();
     
-    // Load sound samples - CRITICAL for drum samples to work!
-    if (loadSamples) {
+    // Load default sound samples - CRITICAL for drum samples to work!
+    // Strudel default samples are loaded from their CDN
+    try {
+      // Use the samples() function to ensure default samples are available
+      // This loads default samples from Strudel's sample repository
+      await evaluate(`
+        samples({
+          bd: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/bd/BT0A0D0.wav',
+          sn: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/sn/rytm-01-classic.wav',
+          hh: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/hh/000_hh27closedhh.wav',
+          cp: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/cp/mask1.wav',
+          oh: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/oh/hihat.wav',
+          ride: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/ride/000_ride1.wav',
+          crash: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/crash/000_crash1.wav',
+          tom: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/tom/000_tom1.wav',
+          rim: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/rim/RIM01.WAV',
+          clap: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/clap/handclap.wav',
+          perc: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/perc/bell1.wav',
+        }, '')
+      `);
+      console.log('Strudel default samples loaded successfully');
+    } catch (sampleError) {
+      console.warn('Could not load samples via samples(), trying simpler approach:', sampleError);
+      // Try simpler: just evaluate a pattern to trigger sample loading
       try {
-        await loadSamples();
-        console.log('Strudel samples loaded successfully');
-      } catch (sampleError) {
-        console.warn('Could not load samples via loadSamples(), trying alternative method:', sampleError);
-        // Try alternative: evaluate code to load samples
-        try {
-          await evaluate('loadSamples()');
-          console.log('Strudel samples loaded via evaluate');
-        } catch (evalError) {
-          console.warn('Could not load samples, trying direct load:', evalError);
-          // Final fallback: load via code
-          try {
-            await evaluate('await loadSamples()');
-          } catch (e) {
-            console.error('Failed to load samples:', e);
-          }
-        }
-      }
-    } else {
-      // Fallback: use evaluate to load samples
-      try {
-        await evaluate('await loadSamples()');
-        console.log('Strudel samples loaded via evaluate fallback');
+        // Trigger sample loading by evaluating a simple pattern
+        await evaluate('s("bd")');
+        // Wait a bit for samples to load
+        await new Promise(resolve => setTimeout(resolve, 500));
+        console.log('Strudel samples should be loading...');
       } catch (evalError) {
-        console.warn('Sample loading may have failed:', evalError);
+        console.warn('Sample preload failed, samples will load on first use:', evalError);
       }
     }
     
