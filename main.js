@@ -589,6 +589,18 @@ function createEmbeddedREPL() {
     overflow-x: auto;
   `;
   
+  // Sync code changes to peers in multiplayer mode (with debouncing)
+  let codeSyncTimeout;
+  codeEditor.addEventListener('input', () => {
+    if (isConnected && room && room.actions && room.actions.sendCode) {
+      // Debounce code sync to avoid spamming peers
+      clearTimeout(codeSyncTimeout);
+      codeSyncTimeout = setTimeout(() => {
+        syncCodeToPeers();
+      }, 500); // Wait 500ms after last keystroke
+    }
+  });
+  
   evalBtn.addEventListener('click', () => {
     const code = codeEditor.value;
     if (code.trim() && evaluate) {
@@ -734,14 +746,70 @@ function syncBlocksToPeers() {
   }
 }
 
+// Sync code to peers
+function syncCodeToPeers() {
+  if (!room || !room.actions || !room.actions.sendCode) return;
+  
+  const codeEditor = document.getElementById('code-editor');
+  if (!codeEditor) return;
+  
+  const code = codeEditor.value.trim();
+  
+  try {
+    room.actions.sendCode([code, userName]);
+  } catch (error) {
+    console.warn('Failed to sync code:', error);
+  }
+}
+
 // Generate mixed code from all peers
 function evaluateMixedCode() {
   if (!isPlaying || !strudelInitialized || !evaluate) return;
   
-  // Collect all active patterns from all peers
+  // Check if any peer has custom code (not generated from blocks)
+  const hasCustomCode = Array.from(peers.values()).some(peer => peer.code && peer.code.trim() && !peer.code.startsWith('//'));
+  const codeEditor = document.getElementById('code-editor');
+  const localHasCustomCode = codeEditor && codeEditor.value.trim() && !codeEditor.value.startsWith('//') && !codeEditor.value.includes('stack(');
+  
+  // If using custom code mode, combine all custom code
+  if (hasCustomCode || localHasCustomCode) {
+    const allCode = [];
+    
+    // Add local custom code if present
+    if (localHasCustomCode) {
+      allCode.push(codeEditor.value.trim());
+    }
+    
+    // Add peer custom code
+    peers.forEach((peerData) => {
+      if (peerData.code && peerData.code.trim() && !peerData.code.startsWith('//')) {
+        allCode.push(peerData.code.trim());
+      }
+    });
+    
+    if (allCode.length > 0) {
+      // Combine custom code from all peers
+      let combinedCode = allCode.join('\n\n');
+      
+      // Only add setcps if not present
+      if (!combinedCode.includes('setcps')) {
+        combinedCode = 'setcps(1)\n' + combinedCode;
+      }
+      
+      try {
+        evaluate(combinedCode);
+        return;
+      } catch (error) {
+        console.warn('Custom code evaluation failed:', error);
+        // Fall through to block-based mixing
+      }
+    }
+  }
+  
+  // Fallback to block-based pattern mixing
   const allPatterns = [];
   
-  // Add local patterns
+  // Add local patterns from blocks
   const localActiveBlocks = blocks.filter(b => !b.disabled && !b.muted);
   const localBaseBlocks = localActiveBlocks.filter(b => ['note', 'synth', 'sample'].includes(b.type));
   localBaseBlocks.forEach(block => {
@@ -755,7 +823,7 @@ function evaluateMixedCode() {
     allPatterns.push(patternCode);
   });
   
-  // Add peer patterns
+  // Add peer patterns from blocks
   peers.forEach((peerData, peerId) => {
     if (!peerData.blocks) return;
     peerData.blocks.forEach(block => {
@@ -1240,10 +1308,13 @@ function initializeRoom(config) {
     // Create action for sending blocks
     const [sendBlocks, getBlocks] = room.makeAction('blocks');
     
-    // Store action for use in syncBlocksToPeers
-    room.actions = { sendBlocks };
+    // Create action for sending code
+    const [sendCode, getCode] = room.makeAction('code');
     
-    // Set up receive handler
+    // Store actions for use in sync functions
+    room.actions = { sendBlocks, sendCode };
+    
+    // Set up block receive handler
     getBlocks((data, peerId) => {
       const [receivedBlocks, peerName] = data || [[], 'Unknown'];
       console.log('Received blocks from:', peerName, peerId);
@@ -1262,6 +1333,25 @@ function initializeRoom(config) {
       }
     });
     
+    // Set up code receive handler
+    getCode((data, peerId) => {
+      const [receivedCode, peerName] = data || ['', 'Unknown'];
+      console.log('Received code from:', peerName, peerId);
+      
+      if (!peers.has(peerId)) {
+        peers.set(peerId, { name: peerName, blocks: [], code: '' });
+        updatePeersDisplay();
+      }
+      peers.get(peerId).code = receivedCode;
+      peers.get(peerId).name = peerName; // Update name in case it changed
+      updatePeersDisplay();
+      
+      // Re-evaluate mixed code if playing (including custom code from peers)
+      if (isPlaying) {
+        evaluateMixedCode();
+      }
+    });
+    
     // Peer connection/disconnection handlers
     room.onPeerJoin((peerId) => {
       console.log('Peer joined:', peerId);
@@ -1270,8 +1360,11 @@ function initializeRoom(config) {
       }
       updatePeersDisplay();
       
-      // Send our blocks to the new peer
-      setTimeout(() => syncBlocksToPeers(), 500);
+      // Send our blocks and code to the new peer
+      setTimeout(() => {
+        syncBlocksToPeers();
+        syncCodeToPeers();
+      }, 500);
     });
     
     room.onPeerLeave((peerId) => {
@@ -1285,9 +1378,10 @@ function initializeRoom(config) {
       }
     });
     
-    // Send initial blocks on join
+    // Send initial blocks and code on join
     setTimeout(() => {
       syncBlocksToPeers();
+      syncCodeToPeers();
     }, 1000);
     
     isConnected = true;
@@ -1341,10 +1435,14 @@ function updatePeersDisplay() {
     const card = document.createElement('div');
     card.className = 'peer-card';
     const blockCount = peerData.blocks ? peerData.blocks.filter(b => !b.disabled && !b.muted).length : 0;
+    const hasCode = peerData.code && peerData.code.trim() && !peerData.code.startsWith('//');
     card.innerHTML = `
       <h4>${peerData.name || 'Unknown'}</h4>
       <div class="peer-status">Active</div>
-      <div class="peer-blocks">${blockCount} active block${blockCount !== 1 ? 's' : ''}</div>
+      <div class="peer-blocks">
+        ${blockCount > 0 ? `${blockCount} active block${blockCount !== 1 ? 's' : ''}` : ''}
+        ${hasCode ? (blockCount > 0 ? ' + custom code' : 'Custom code') : ''}
+      </div>
     `;
     peersContainer.appendChild(card);
   });
