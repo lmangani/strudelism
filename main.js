@@ -733,7 +733,10 @@ function generateCodeFromBlocks() {
 
 // Sync blocks to peers (without sharing code)
 function syncBlocksToPeers() {
-  if (!room || !room.actions || !room.actions.sendBlocks) return;
+  if (!room || !room.actions || !room.actions.sendBlocks) {
+    console.warn('Cannot sync blocks - room or actions not ready');
+    return;
+  }
   
   // Send block metadata (not code) to peers
   const blockData = blocks.map(b => ({
@@ -744,10 +747,13 @@ function syncBlocksToPeers() {
     params: b.params
   }));
   
+  console.log('Syncing', blockData.length, 'blocks to peers, user:', userName);
+  
   try {
     room.actions.sendBlocks([blockData, userName]);
+    console.log('Blocks synced successfully');
   } catch (error) {
-    console.warn('Failed to sync blocks:', error);
+    console.error('Failed to sync blocks:', error);
   }
 }
 
@@ -1590,12 +1596,36 @@ function initializeRoom(config) {
     room.onPeerLeave((peerId) => {
       console.log('Peer left:', peerId);
       
-      // If host left, take over host role if we're the only one left
-      if (hostPeerId === peerId && peers.size > 0) {
-        isHost = true;
-        hostPeerId = room.selfId;
-        console.log('Host left, we are now the host');
+      // If host left, recalculate host based on remaining peers
+      if (hostPeerId === peerId) {
+        // Host left - determine new host
+        const remainingPeerIds = Array.from(peers.keys()).concat([ourPeerId]);
+        remainingPeerIds.sort();
+        const newHostId = remainingPeerIds[0];
+        
+        if (newHostId === ourPeerId) {
+          isHost = true;
+          hostPeerId = ourPeerId;
+          console.log('Host left, we are now the host');
+          
+          // Announce we're the new host
+          if (room && room.actions && room.actions.sendHostAnnounce) {
+            try {
+              room.actions.sendHostAnnounce([ourPeerId, true]);
+            } catch (e) {
+              console.warn('Failed to announce new host:', e);
+            }
+          }
+        } else {
+          isHost = false;
+          hostPeerId = newHostId;
+          console.log('Host left, new host is:', hostPeerId);
+        }
+        updateConnectionUI();
       }
+      
+      // Remove remote blocks for this peer
+      remoteBlocks.delete(peerId);
       
       peers.delete(peerId);
       updatePeersDisplay();
