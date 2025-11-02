@@ -34,7 +34,7 @@ const BLOCK_TYPES = {
       octave: 'number'
     },
     generate: (params) => {
-      return `n("${params.pattern}").scale('${params.scale}${params.octave}')`;
+      return `n("${params.pattern}").scale("${params.octave === '' ? 'C' : 'C' + params.octave}:${params.scale}")`;
     }
   },
   sample: {
@@ -49,7 +49,10 @@ const BLOCK_TYPES = {
       pattern: 'text'
     },
     generate: (params) => {
-      return `s("${params.pattern}")`;
+      // Replace pattern characters with actual sample name
+      // Convert pattern like "x ~ x ~" to "bd ~ bd ~" using the selected sample
+      const samplePattern = params.pattern.replace(/x/g, params.sample);
+      return `s("${samplePattern}")`;
     }
   },
   synth: {
@@ -68,7 +71,7 @@ const BLOCK_TYPES = {
       octave: 'number'
     },
     generate: (params) => {
-      return `n("${params.pattern}").scale('${params.scale}${params.octave}').s('${params.wave}')`;
+      return `n("${params.pattern}").scale("${params.octave === '' ? 'C' : 'C' + params.octave}:${params.scale}").s("${params.wave}")`;
     }
   },
   effect: {
@@ -227,32 +230,32 @@ const EXAMPLE_PATTERNS = [
   {
     name: 'Melodic Scale',
     description: 'Ascending scale pattern',
-    code: 'n("<0 1 2 3 4 5 6 7>").scale("C4 major")',
+    code: 'n("<0 1 2 3 4 5 6 7>").scale("C4:major")',
     category: 'Melody'
   },
   {
     name: 'Pentatonic Melody',
     description: 'Pentatonic scale melody',
-    code: 'n("<0 2 4 7 9 7 4 2>").scale("C4 pentatonic")',
+    code: 'n("<0 2 4 7 9 7 4 2>").scale("C4:pentatonic")',
     category: 'Melody'
   },
   {
     name: 'Blues Scale',
     description: 'Classic blues scale pattern',
-    code: 'n("<0 3 5 6 7 10 12>").scale("C4 blues")',
+    code: 'n("<0 3 5 6 7 10 12>").scale("C4:blues")',
     category: 'Melody'
   },
   // Arpeggiators
   {
     name: 'Major Arpeggio',
     description: 'Upward major chord arpeggio',
-    code: 'n("0 4 7 12").scale("C4 major").s("sine").lpf(2000)',
+    code: 'n("0 4 7 12").scale("C4:major").s("sine").lpf(2000)',
     category: 'Arpeggiator'
   },
   {
     name: 'Minor Arpeggio',
     description: 'Minor chord arpeggio pattern',
-    code: 'n("0 3 7 12").scale("C4 minor").s("saw").lpf(1500)',
+    code: 'n("0 3 7 12").scale("C4:minor").s("saw").lpf(1500)',
     category: 'Arpeggiator'
   },
   // Chord Builders
@@ -352,10 +355,10 @@ const DOCUMENTATION = {
   'Scales': {
     description: 'Apply musical scales to note patterns',
     examples: [
-      '.scale("C4 major")',
-      '.scale("A4 minor")',
-      '.scale("G4 pentatonic")',
-      '.scale("D4 dorian")'
+      '.scale("C4:major")',
+      '.scale("A4:minor")',
+      '.scale("G4:pentatonic")',
+      '.scale("D4:dorian")'
     ]
   },
   'Structure': {
