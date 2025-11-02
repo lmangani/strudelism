@@ -148,79 +148,79 @@ const BLOCK_TYPES = {
   }
 };
 
-// Drum-focused example patterns
+// Drum-focused example patterns - USING SYNTHS since samples aren't loading reliably
 const EXAMPLE_PATTERNS = [
-  // Drum Patterns - THE MOST IMPORTANT!
+  // Drum Patterns - THE MOST IMPORTANT! Using synth sounds that work without loading samples
   {
     name: '4/4 Kick Pattern',
-    description: 'Standard four-on-the-floor',
-    code: 's("bd ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~")',
+    description: 'Standard four-on-the-floor (synth kick)',
+    code: 'n("c2 ~ ~ ~ c2 ~ ~ ~ c2 ~ ~ ~ c2 ~ ~ ~").s("sine").lpf(60).gain(1.2)',
     category: 'Drums'
   },
   {
     name: 'Full Kit Pattern',
-    description: 'Complete drum kit pattern',
-    code: 's("bd hh sn hh bd hh sn hh")',
+    description: 'Complete drum kit (kick, hihat, snare)',
+    code: 'stack(n("c2 ~ ~ ~ c2 ~ ~ ~").s("sine").lpf(60).gain(1.1), n("~ ~ ~ c4").s("noise").lpf(8000).gain(0.6), n("~ e5 ~ ~ ~ e5 ~ ~").s("sine").lpf(12000).gain(0.3))',
     category: 'Drums'
   },
   {
     name: 'Kick + Snare',
-    description: 'Classic kick and snare',
-    code: 's("bd ~ sn ~ bd ~ sn ~")',
+    description: 'Classic kick and snare pattern',
+    code: 'stack(n("c2 ~ ~ ~ c2 ~ ~ ~").s("sine").lpf(60).gain(1.1), n("~ ~ c4 ~").s("noise").lpf(8000).gain(0.7))',
     category: 'Drums'
   },
   {
     name: 'Breakbeat',
     description: 'Amen-style breakbeat',
-    code: 's("bd*2 ~ sn bd ~ sn ~ bd").fast(2).room(0.3)',
+    code: 'stack(n("c2*2 ~ c2 ~ c2 ~ c2").s("sine").lpf(60).gain(1.1), n("~ ~ c4 ~ ~ c4 ~ ~").s("noise").lpf(8000).gain(0.7)).fast(2).room(0.3)',
     category: 'Drums'
   },
   {
     name: 'Techno Kick',
     description: 'Driving techno pattern',
-    code: 's("bd ~ bd ~ bd ~ bd ~").gain(1.1)',
+    code: 'n("c2 ~ c2 ~ c2 ~ c2 ~").s("sine").lpf(60).gain(1.2)',
     category: 'Drums'
   },
   {
     name: 'Jungle Breaks',
     description: 'Fast jungle break pattern',
-    code: 's("bd*2 ~ sn ~ hh*2 sn ~ bd").fast(4).room(0.5)',
+    code: 'stack(n("c2*2 ~ c2 ~ c2").s("sine").lpf(60).gain(1.1), n("~ ~ c4 ~ c4 ~").s("noise").lpf(8000).gain(0.7), n("~ e5*2 ~ e5 ~").s("sine").lpf(12000).gain(0.3)).fast(4).room(0.5)',
     category: 'Drums'
   },
   {
     name: 'Double Time',
     description: 'Fast double-time pattern',
-    code: 's("bd bd sn ~ bd bd sn ~").fast(2)',
+    code: 'stack(n("c2 c2 c4 ~ c2 c2 c4 ~").s("sine").lpf(60).gain(1.1), n("~ ~ ~ c4").s("noise").lpf(8000).gain(0.7)).fast(2)',
     category: 'Drums'
   },
   {
     name: '808 Pattern',
-    description: 'Classic 808 pattern',
-    code: 's("bd ~ ~ ~ bd ~ ~ sn ~ ~ bd ~ ~ ~ bd")',
+    description: 'Classic 808-style pattern',
+    code: 'n("c2 ~ ~ ~ c2 ~ ~ c4 ~ ~ c2 ~ ~ ~ c2").s("sine").lpf(60).gain(1.3)',
     category: 'Drums'
   },
   {
     name: 'Hi-Hat Groove',
     description: 'Hi-hat focused groove',
-    code: 's("~ hh ~ hh ~ hh*2 ~ hh").room(0.2)',
+    code: 'n("~ e5 ~ e5 ~ e5*2 ~ e5").s("sine").lpf(12000).gain(0.4).room(0.2)',
     category: 'Drums'
   },
   {
     name: 'Rolling Snare',
     description: 'Snare roll pattern',
-    code: 's("~ ~ sn*4 ~ ~ ~ ~")',
+    code: 'n("~ ~ c4*4 ~ ~ ~ ~").s("noise").lpf(8000).gain(0.7)',
     category: 'Drums'
   },
   {
     name: 'Open Hi-Hat Pattern',
     description: 'Open hi-hat accents',
-    code: 's("bd ~ oh ~ sn ~ oh ~")',
+    code: 'stack(n("c2 ~ ~ ~ c4 ~ ~ ~").s("sine").lpf(60).gain(1.1), n("~ ~ e5 ~ ~ e5 ~ ~").s("sine").lpf(8000).gain(0.5))',
     category: 'Drums'
   },
   {
     name: 'Cymbal Crash',
     description: 'Crash cymbal accents',
-    code: 's("crash ~ ~ ~ ~ crash ~ ~")',
+    code: 'n("c5 ~ ~ ~ ~ c5 ~ ~").s("noise").lpf(15000).gain(0.6).room(0.3)',
     category: 'Drums'
   },
   // Melodic Patterns
@@ -278,7 +278,7 @@ const EXAMPLE_PATTERNS = [
   {
     name: '808 Bass',
     description: 'Classic 808 sub bass',
-    code: 's("bd ~ ~ bd ~ ~ bd ~").lpf(200).gain(1.3)',
+    code: 'n("c2 ~ ~ c2 ~ ~ c2 ~").s("sine").lpf(60).gain(1.3)',
     category: 'Bass'
   },
   // Synths
@@ -427,35 +427,9 @@ async function initializeStrudel() {
     
     await initStrudel();
     
-    // Load default sound samples - CRITICAL for drum samples to work!
-    // Strudel default samples are loaded from their CDN
-    try {
-      // Use the samples() function to ensure default samples are available
-      // This loads default samples from Strudel's sample repository
-      // Note: samples() is a side-effect function, so we wrap it to avoid pattern evaluation errors
-      evaluate(`
-        (() => {
-          samples({
-            bd: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/bd/BT0A0D0.wav',
-            sn: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/sn/rytm-01-classic.wav',
-            hh: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/hh/000_hh27closedhh.wav',
-            cp: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/cp/mask1.wav',
-            oh: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/oh/hihat.wav',
-            ride: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/ride/000_ride1.wav',
-            crash: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/crash/000_crash1.wav',
-            tom: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/tom/000_tom1.wav',
-            rim: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/rim/RIM01.WAV',
-            clap: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/clap/handclap.wav',
-            perc: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/perc/bell1.wav',
-          }, '');
-          return silence();
-        })()
-      `);
-      console.log('Strudel default samples loaded successfully');
-    } catch (sampleError) {
-      console.warn('Could not load samples via samples(), samples will load on first use:', sampleError);
-      // Samples will load automatically when first used
-    }
+    // Note: Sample loading is problematic, so we're using synth-based drum sounds in presets instead
+    // Users can still use samples if they load them manually via the code editor
+    console.log('Strudel initialized - using synth-based drum sounds in presets');
     
     strudelInitialized = true;
     console.log('Strudel initialized successfully');
