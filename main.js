@@ -11,11 +11,13 @@ let isPlaying = false;
 // Multi-player state
 let room = null;
 let peers = new Map(); // Map of peerId -> { name, blocks, code }
+let remoteBlocks = new Map(); // Map of peerId -> array of blocks (for UI display)
 let userName = '';
 let roomId = '';
 let isConnected = false;
 let isHost = false; // True if this player is the session host (controls playback)
 let hostPeerId = null; // Peer ID of the current host
+let ourPeerId = null; // Our own peer ID
 
 // Block management (local user's blocks)
 let blocks = [];
@@ -771,8 +773,11 @@ function evaluateMixedCode() {
   
   // Only host evaluates and plays
   if (isConnected && !isHost) {
+    console.log('Not host, skipping evaluateMixedCode');
     return;
   }
+  
+  console.log('Evaluating mixed code - isHost:', isHost, 'peers:', peers.size);
   
   // Check if any peer has custom code (not generated from blocks)
   const hasCustomCode = Array.from(peers.values()).some(peer => peer.code && peer.code.trim() && !peer.code.startsWith('//'));
@@ -833,14 +838,29 @@ function evaluateMixedCode() {
   
   // Add peer patterns from blocks
   peers.forEach((peerData, peerId) => {
-    if (!peerData.blocks) return;
+    if (!peerData || !peerData.blocks || peerData.blocks.length === 0) {
+      console.log('Peer', peerId, 'has no blocks');
+      return;
+    }
+    
+    console.log('Processing blocks from peer', peerId, '(', peerData.name, '):', peerData.blocks.length, 'blocks');
+    
     peerData.blocks.forEach(block => {
+      if (!block) return;
       if (block.disabled || block.muted) return;
       if (!['note', 'synth', 'sample'].includes(block.type)) return;
-      const patternCode = BLOCK_TYPES[block.type].generate(block.params);
-      allPatterns.push(patternCode);
+      
+      try {
+        const patternCode = BLOCK_TYPES[block.type].generate(block.params);
+        console.log('Generated pattern from peer block:', patternCode);
+        allPatterns.push(patternCode);
+      } catch (error) {
+        console.warn('Failed to generate pattern from peer block:', error, block);
+      }
     });
   });
+  
+  console.log('Total patterns to mix:', allPatterns.length, 'local:', localBaseBlocks.length, 'remote:', peers.size);
   
   if (allPatterns.length === 0) return;
   
@@ -1217,16 +1237,25 @@ playBtn.addEventListener('click', async () => {
   // In multiplayer, only host can control playback
   // But allow if we're alone (we're automatically host then)
   if (isConnected && !isHost) {
-    // Double-check: if we're alone, we should be host
-    if (peers.size === 0) {
-      isHost = true;
-      hostPeerId = room.selfId;
-      updateConnectionUI();
-      console.log('Auto-promoted to host (we are alone)');
-    } else {
-      alert('Only the session host can control playback.');
-      return;
-    }
+      // Double-check: if we're alone, we should be host
+      if (peers.size === 0) {
+        isHost = true;
+        hostPeerId = ourPeerId;
+        updateConnectionUI();
+        console.log('Auto-promoted to host (we are alone)');
+        
+        // Announce we're host
+        if (room && room.actions && room.actions.sendHostAnnounce) {
+          try {
+            room.actions.sendHostAnnounce([ourPeerId, true]);
+          } catch (e) {
+            console.warn('Failed to announce host:', e);
+          }
+        }
+      } else {
+        alert('Only the session host can control playback.');
+        return;
+      }
   }
   
   const codeEditor = document.getElementById('code-editor');
@@ -1383,6 +1412,10 @@ function initializeRoom(config) {
   try {
     room = trystero(config, roomId);
     
+    // Store our peer ID
+    ourPeerId = room.selfId;
+    console.log('Our peer ID:', ourPeerId);
+    
     // Create action for sending blocks
     const [sendBlocks, getBlocks] = room.makeAction('blocks');
     
@@ -1392,24 +1425,31 @@ function initializeRoom(config) {
     // Create action for play/stop state (host control)
     const [sendPlayState, getPlayState] = room.makeAction('playState');
     
+    // Create action for host announcement
+    const [sendHostAnnounce, getHostAnnounce] = room.makeAction('hostAnnounce');
+    
     // Store actions for use in sync functions
-    room.actions = { sendBlocks, sendCode, sendPlayState };
+    room.actions = { sendBlocks, sendCode, sendPlayState, sendHostAnnounce };
     
     // Set up block receive handler
     getBlocks((data, peerId) => {
       const [receivedBlocks, peerName] = data || [[], 'Unknown'];
-      console.log('Received blocks from:', peerName, peerId);
+      console.log('Received blocks from:', peerName, peerId, 'blocks:', receivedBlocks);
       
       if (!peers.has(peerId)) {
         peers.set(peerId, { name: peerName, blocks: [], code: '' });
-        updatePeersDisplay();
       }
+      
+      // Store blocks from this peer
       peers.get(peerId).blocks = receivedBlocks;
-      peers.get(peerId).name = peerName; // Update name in case it changed
+      peers.get(peerId).name = peerName;
+      remoteBlocks.set(peerId, receivedBlocks);
+      
       updatePeersDisplay();
       
-      // Re-evaluate mixed code if playing and we're host
-      if (isPlaying && isHost) {
+      // If we're host and playing, re-evaluate mixed code with new blocks
+      if (isHost && isPlaying) {
+        console.log('Host: Re-evaluating with new blocks from', peerName);
         evaluateMixedCode();
       }
     });
@@ -1441,7 +1481,8 @@ function initializeRoom(config) {
       // Update host info if provided
       if (hostId) {
         hostPeerId = hostId;
-        isHost = (hostId === room.selfId);
+        isHost = (hostId === ourPeerId);
+        console.log('Updated host info from play state - hostId:', hostId, 'we are host:', isHost);
         updateConnectionUI();
       }
       
@@ -1482,21 +1523,60 @@ function initializeRoom(config) {
       }
     });
     
+    // Set up host announcement handler
+    getHostAnnounce((data, peerId) => {
+      const [announcingHostId, announcingIsHost] = data || [null, false];
+      console.log('Host announcement from:', peerId, 'hostId:', announcingHostId, 'isHost:', announcingIsHost);
+      
+      if (announcingIsHost && announcingHostId) {
+        // Someone is claiming to be host
+        if (!hostPeerId || announcingHostId < hostPeerId) {
+          // First host or earlier host (lexicographic order) wins
+          hostPeerId = announcingHostId;
+          isHost = (hostPeerId === ourPeerId);
+          console.log('Host determined:', hostPeerId, 'we are host:', isHost);
+          updateConnectionUI();
+        }
+      }
+    });
+    
     // Peer connection/disconnection handlers
     room.onPeerJoin((peerId) => {
       console.log('Peer joined:', peerId);
       if (!peers.has(peerId)) {
         peers.set(peerId, { name: 'Unknown', blocks: [], code: '' });
+        remoteBlocks.set(peerId, []);
       }
       updatePeersDisplay();
       
-      // Determine host: first person in room is host
-      // If we were alone, we're already host. Otherwise, check if we're first.
-      if (!hostPeerId) {
-        // We're the first one - we're the host
-        isHost = true;
-        hostPeerId = room.selfId;
-        console.log('We are the host (first in room)');
+      // Determine host: use lexicographic ordering of peer IDs
+      // First peer ID (alphabetically) is host
+      const allPeerIds = Array.from(peers.keys()).concat([ourPeerId]);
+      allPeerIds.sort();
+      const firstPeerId = allPeerIds[0];
+      
+      if (firstPeerId === ourPeerId) {
+        // We're first - we're the host
+        if (!isHost || hostPeerId !== ourPeerId) {
+          isHost = true;
+          hostPeerId = ourPeerId;
+          console.log('We are the host (first peer ID)');
+          updateConnectionUI();
+          
+          // Announce we're host
+          setTimeout(() => {
+            try {
+              room.actions.sendHostAnnounce([ourPeerId, true]);
+            } catch (e) {
+              console.warn('Failed to announce host:', e);
+            }
+          }, 500);
+        }
+      } else {
+        // Someone else is first
+        isHost = false;
+        hostPeerId = firstPeerId;
+        console.log('Host is:', hostPeerId, 'we are host:', isHost);
         updateConnectionUI();
       }
       
@@ -1532,19 +1612,36 @@ function initializeRoom(config) {
       }
     });
     
-    // When we first join, check if we're alone (then we're host)
-    // Or if there are already peers (then first peer is host)
+    // When we first join, determine host based on peer IDs
     setTimeout(() => {
-      // Get current peer count (including ourselves)
-      const currentPeers = peers.size;
-      
-      if (currentPeers === 0) {
-        // We're alone - we're the host
+      // If we're alone, we're definitely host
+      if (peers.size === 0) {
         isHost = true;
-        hostPeerId = room.selfId;
+        hostPeerId = ourPeerId;
         console.log('We are the host (alone in room)');
+      } else {
+        // Check if we're first among existing peers
+        const allPeerIds = Array.from(peers.keys()).concat([ourPeerId]);
+        allPeerIds.sort();
+        const firstPeerId = allPeerIds[0];
+        
+        if (firstPeerId === ourPeerId) {
+          isHost = true;
+          hostPeerId = ourPeerId;
+          console.log('We are the host (first peer ID among existing peers)');
+          
+          // Announce we're host
+          try {
+            room.actions.sendHostAnnounce([ourPeerId, true]);
+          } catch (e) {
+            console.warn('Failed to announce host:', e);
+          }
+        } else {
+          isHost = false;
+          hostPeerId = firstPeerId;
+          console.log('Host is:', hostPeerId, 'we are host:', isHost);
+        }
       }
-      // If there are peers, wait for peerJoin event to determine host
       
       updateConnectionUI();
       
