@@ -509,6 +509,7 @@ async function initializeStrudel() {
     // Load default samples using Strudel's built-in sample loading
     // Use the 'github:tidalcycles/dirt-samples' syntax which is the proper way
     try {
+      // Load samples without wrapping in silence() - just evaluate the samples() call
       evaluate(`samples({
         bd: ['bd/BT0AADA.wav', 'bd/BT0AAD0.wav'],
         sn: ['sn/rytm-01-classic.wav', 'sn/rytm-00-hard.wav'],
@@ -522,7 +523,7 @@ async function initializeStrudel() {
         rim: ['rim/RIM01.WAV'],
         clap: ['clap/handclap.wav'],
         perc: ['perc/bell1.wav']
-      }, 'github:tidalcycles/dirt-samples'); silence()`);
+      }, 'github:tidalcycles/dirt-samples')`);
       console.log('Strudel default samples loaded successfully');
     } catch (sampleError) {
       console.warn('Could not load samples, trying alternative:', sampleError);
@@ -541,7 +542,7 @@ async function initializeStrudel() {
           rim: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/rim/RIM01.WAV',
           clap: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/clap/handclap.wav',
           perc: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/perc/bell1.wav'
-        }, ''); silence()`);
+        }, '')`);
         console.log('Strudel samples loaded via direct URLs');
       } catch (fallbackError) {
         console.error('Sample loading failed completely:', fallbackError);
@@ -1810,8 +1811,18 @@ if (shareRoomBtn) {
 
 // Auto-connect on page load
 async function autoConnect() {
-  // Read or generate room ID
+  // Read room ID from URL first
   readRoomIdFromURL();
+  
+  // If no room ID exists, generate one and add to URL
+  if (!roomId) {
+    roomId = Math.random().toString(36).substring(2, 9);
+    updateURLWithRoomId(roomId);
+    if (roomIdInput) {
+      roomIdInput.value = roomId;
+    }
+    console.log('Auto-generated room ID:', roomId);
+  }
   
   // Generate a default user name if not provided
   if (!userName) {
@@ -1827,21 +1838,17 @@ async function autoConnect() {
     return;
   }
   
-  // Auto-connect if we have a room ID
-  if (roomId) {
-    const config = {
-      appId: 'strudelism-multiplayer'
-    };
-    
-    try {
-      initializeRoom(config);
-      console.log('Auto-connected to room:', roomId);
-    } catch (error) {
-      console.warn('Auto-connect failed:', error);
-      // Don't show alert on auto-connect failure - user can manually connect
-    }
-  } else {
-    console.log('No room ID found, user can connect manually');
+  // Auto-connect with room ID (always exists now)
+  const config = {
+    appId: 'strudelism-multiplayer'
+  };
+  
+  try {
+    initializeRoom(config);
+    console.log('Auto-connected to room:', roomId);
+  } catch (error) {
+    console.warn('Auto-connect failed:', error);
+    // Don't show alert on auto-connect failure - user can manually connect
   }
 }
 
