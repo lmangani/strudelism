@@ -3,6 +3,7 @@ let initStrudel, evaluate, note, silence, hush, loadSamples;
 
 // Initialize Strudel
 let strudelInitialized = false;
+let isPlaying = false;
 
 // Block management
 let blocks = [];
@@ -17,6 +18,57 @@ const PRESET_OPTIONS = {
   modulationTypes: ['sine', 'saw', 'perlin'],
   modulationTargets: ['lpf', 'hpf', 'gain', 'pan', 'room']
 };
+
+// Quick preset blocks for fast drum kit creation
+const QUICK_PRESETS = [
+  {
+    name: 'Kick',
+    icon: '🥁',
+    blocks: [
+      { type: 'sample', params: { sample: 'bd', pattern: 'x ~ ~ ~' } }
+    ]
+  },
+  {
+    name: 'Snare',
+    icon: '🎵',
+    blocks: [
+      { type: 'sample', params: { sample: 'sn', pattern: '~ ~ x ~' } }
+    ]
+  },
+  {
+    name: 'Hi-Hat',
+    icon: '🔔',
+    blocks: [
+      { type: 'sample', params: { sample: 'hh', pattern: '~ x ~ x' } }
+    ]
+  },
+  {
+    name: 'Full Kit',
+    icon: '🎤',
+    blocks: [
+      { type: 'sample', params: { sample: 'bd', pattern: 'x ~ ~ ~ x ~ ~ ~' } },
+      { type: 'sample', params: { sample: 'sn', pattern: '~ ~ x ~ ~ ~ x ~' } },
+      { type: 'sample', params: { sample: 'hh', pattern: '~ x ~ x ~ x ~ x' } }
+    ]
+  },
+  {
+    name: 'House Beat',
+    icon: '🏠',
+    blocks: [
+      { type: 'sample', params: { sample: 'bd', pattern: 'x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~' } },
+      { type: 'sample', params: { sample: 'hh', pattern: '~ x ~ x ~ x ~ x ~ x ~ x ~ x ~ x' } }
+    ]
+  },
+  {
+    name: 'Breakbeat',
+    icon: '🎶',
+    blocks: [
+      { type: 'sample', params: { sample: 'bd', pattern: 'x*2 ~ x ~ x' } },
+      { type: 'sample', params: { sample: 'sn', pattern: '~ ~ x ~ ~ x ~ ~' } },
+      { type: 'sample', params: { sample: 'hh', pattern: '~ x ~ x ~ x*2 ~ x' } }
+    ]
+  }
+];
 
 // Block types and their parameters with field types
 const BLOCK_TYPES = {
@@ -602,21 +654,32 @@ function generateCodeFromBlocks() {
     patterns.push(patternCode);
   });
   
-  // Combine patterns (stack them or separate with newlines)
+  // Combine patterns - use stack() to layer them properly
   let code = '';
-  if (patterns.length === 1) {
+  if (patterns.length === 0) {
+    code = '// No active blocks';
+  } else if (patterns.length === 1) {
     code = patterns[0];
   } else {
-    // Multiple patterns - combine them
-    code = patterns.join('\n');
+    // Stack multiple patterns to play them simultaneously
+    code = `stack(\n  ${patterns.join(',\n  ')}\n)`;
   }
   
   // Add setcps if not present
-  if (!code.includes('setcps')) {
+  if (!code.includes('setcps') && patterns.length > 0) {
     code = 'setcps(1)\n' + code;
   }
   
   codeEditor.value = code;
+  
+  // Auto-evaluate if currently playing
+  if (isPlaying && strudelInitialized && evaluate && code.trim() && !code.startsWith('//')) {
+    try {
+      evaluate(code);
+    } catch (error) {
+      console.warn('Auto-evaluation failed:', error);
+    }
+  }
 }
 
 // Create a block
@@ -828,9 +891,54 @@ function renderDocumentation() {
   });
 }
 
+// Create preset blocks
+function createPresetBlocks(preset) {
+  preset.blocks.forEach(blockDef => {
+    const block = {
+      id: blockIdCounter++,
+      type: blockDef.type,
+      muted: false,
+      disabled: false,
+      params: { ...blockDef.params }
+    };
+    blocks.push(block);
+    renderBlock(block);
+  });
+  generateCodeFromBlocks();
+  closeModal(blockSelectModal);
+}
+
 // Render block types selection
 function renderBlockTypes() {
   blockTypesList.innerHTML = '';
+  
+  // Quick Presets Section
+  const presetSection = document.createElement('div');
+  presetSection.style.cssText = 'grid-column: 1 / -1; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);';
+  presetSection.innerHTML = '<h3 style="margin-bottom: 0.75rem; color: var(--accent-primary);">Quick Presets (Add Multiple Blocks)</h3>';
+  blockTypesList.appendChild(presetSection);
+  
+  QUICK_PRESETS.forEach(preset => {
+    const card = document.createElement('div');
+    card.className = 'block-type-card';
+    card.innerHTML = `
+      <div class="icon">${preset.icon}</div>
+      <h4>${preset.name}</h4>
+      <p>Add ${preset.blocks.length} block${preset.blocks.length > 1 ? 's' : ''}</p>
+    `;
+    
+    card.addEventListener('click', () => {
+      createPresetBlocks(preset);
+    });
+    
+    blockTypesList.appendChild(card);
+  });
+  
+  // Regular Block Types Section
+  const typesSection = document.createElement('div');
+  typesSection.style.cssText = 'grid-column: 1 / -1; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);';
+  typesSection.innerHTML = '<h3 style="margin-bottom: 0.75rem; color: var(--accent-primary);">Individual Blocks</h3>';
+  blockTypesList.appendChild(typesSection);
   
   Object.keys(BLOCK_TYPES).forEach(typeKey => {
     const blockType = BLOCK_TYPES[typeKey];
@@ -918,10 +1026,12 @@ playBtn.addEventListener('click', async () => {
   if (codeEditor && codeEditor.value.trim() && evaluate) {
     try {
       evaluate(codeEditor.value);
+      isPlaying = true;
       playBtn.textContent = '⏸ Pause';
     } catch (error) {
       console.error('Play error:', error);
       alert('Error playing code: ' + error.message);
+      isPlaying = false;
     }
   } else if (!evaluate) {
     alert('Strudel is not initialized yet. Please wait...');
@@ -932,6 +1042,7 @@ stopBtn.addEventListener('click', () => {
   if (hush) {
     try {
       hush();
+      isPlaying = false;
       playBtn.textContent = '▶ Play';
     } catch (error) {
       console.error('Stop error:', error);
@@ -939,6 +1050,7 @@ stopBtn.addEventListener('click', () => {
       if (evaluate) {
         try {
           evaluate('hush()');
+          isPlaying = false;
           playBtn.textContent = '▶ Play';
         } catch (evalError) {
           console.error('Stop fallback error:', evalError);
@@ -948,6 +1060,7 @@ stopBtn.addEventListener('click', () => {
   } else if (evaluate) {
     try {
       evaluate('hush()');
+      isPlaying = false;
       playBtn.textContent = '▶ Play';
     } catch (error) {
       console.error('Stop error:', error);
