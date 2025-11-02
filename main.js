@@ -14,6 +14,8 @@ let peers = new Map(); // Map of peerId -> { name, blocks, code }
 let userName = '';
 let roomId = '';
 let isConnected = false;
+let isHost = false; // True if this player is the session host (controls playback)
+let hostPeerId = null; // Peer ID of the current host
 
 // Block management (local user's blocks)
 let blocks = [];
@@ -711,10 +713,10 @@ function generateCodeFromBlocks() {
     syncBlocksToPeers();
   }
   
-  // Generate and evaluate mixed code from all peers
-  if (isConnected) {
+  // Generate and evaluate mixed code from all peers (only if host)
+  if (isConnected && isHost && isPlaying) {
     evaluateMixedCode();
-  } else {
+  } else if (!isConnected) {
     // Single player mode - just evaluate local code
     if (isPlaying && strudelInitialized && evaluate && code.trim() && !code.startsWith('//')) {
       try {
@@ -762,9 +764,14 @@ function syncCodeToPeers() {
   }
 }
 
-// Generate mixed code from all peers
+// Generate mixed code from all peers (only host should call this)
 function evaluateMixedCode() {
-  if (!isPlaying || !strudelInitialized || !evaluate) return;
+  if (!strudelInitialized || !evaluate) return;
+  
+  // Only host evaluates and plays
+  if (isConnected && !isHost) {
+    return;
+  }
   
   // Check if any peer has custom code (not generated from blocks)
   const hasCustomCode = Array.from(peers.values()).some(peer => peer.code && peer.code.trim() && !peer.code.startsWith('//'));
@@ -1189,18 +1196,78 @@ function closeModal(modal) {
   modal.classList.remove('active');
 }
 
+// Sync play state to peers
+function syncPlayState(playing) {
+  if (!room || !room.actions || !room.actions.sendPlayState) return;
+  
+  try {
+    room.actions.sendPlayState([playing, isHost, room.selfId]);
+  } catch (error) {
+    console.warn('Failed to sync play state:', error);
+  }
+}
+
 // Event listeners
 playBtn.addEventListener('click', async () => {
   if (!strudelInitialized) {
     await initializeStrudel();
   }
   
+  // In multiplayer, only host can control playback
+  if (isConnected && !isHost) {
+    alert('Only the session host can control playback. The host is currently playing.');
+    return;
+  }
+  
   const codeEditor = document.getElementById('code-editor');
+  
+  if (isPlaying) {
+    // Stop
+    if (hush) {
+      try {
+        hush();
+        isPlaying = false;
+        playBtn.textContent = '▶ Play';
+        if (isConnected) syncPlayState(false);
+      } catch (error) {
+        console.error('Stop error:', error);
+        if (evaluate) {
+          try {
+            evaluate('hush()');
+            isPlaying = false;
+            playBtn.textContent = '▶ Play';
+            if (isConnected) syncPlayState(false);
+          } catch (evalError) {
+            console.error('Stop fallback error:', evalError);
+          }
+        }
+      }
+    } else if (evaluate) {
+      try {
+        evaluate('hush()');
+        isPlaying = false;
+        playBtn.textContent = '▶ Play';
+        if (isConnected) syncPlayState(false);
+      } catch (error) {
+        console.error('Stop error:', error);
+      }
+    }
+    return;
+  }
+  
+  // Start playing
   if (codeEditor && codeEditor.value.trim() && evaluate) {
     try {
-      evaluate(codeEditor.value);
+      if (isConnected) {
+        // Multi-player: evaluate mixed code from all peers
+        evaluateMixedCode();
+      } else {
+        // Single player: evaluate local code
+        evaluate(codeEditor.value);
+      }
       isPlaying = true;
       playBtn.textContent = '⏸ Pause';
+      if (isConnected) syncPlayState(true);
     } catch (error) {
       console.error('Play error:', error);
       alert('Error playing code: ' + error.message);
@@ -1212,11 +1279,18 @@ playBtn.addEventListener('click', async () => {
 });
 
 stopBtn.addEventListener('click', () => {
+  // In multiplayer, only host can control playback
+  if (isConnected && !isHost) {
+    alert('Only the session host can control playback.');
+    return;
+  }
+  
   if (hush) {
     try {
       hush();
       isPlaying = false;
       playBtn.textContent = '▶ Play';
+      if (isConnected) syncPlayState(false);
     } catch (error) {
       console.error('Stop error:', error);
       // Fallback to evaluate
@@ -1225,6 +1299,7 @@ stopBtn.addEventListener('click', () => {
           evaluate('hush()');
           isPlaying = false;
           playBtn.textContent = '▶ Play';
+          if (isConnected) syncPlayState(false);
         } catch (evalError) {
           console.error('Stop fallback error:', evalError);
         }
@@ -1235,6 +1310,7 @@ stopBtn.addEventListener('click', () => {
       evaluate('hush()');
       isPlaying = false;
       playBtn.textContent = '▶ Play';
+      if (isConnected) syncPlayState(false);
     } catch (error) {
       console.error('Stop error:', error);
     }
@@ -1274,24 +1350,16 @@ loadPresetBtn.addEventListener('click', () => {
 });
 
 
-// Initialize Trystero and P2P
+// Initialize Trystero and P2P - use BitTorrent (default strategy)
 async function initializeP2P() {
   try {
-    // Try IPFS first (no signup required)
-    const trysteroIPFS = await import('trystero/ipfs');
-    trystero = trysteroIPFS.joinRoom;
-    console.log('Trystero (IPFS) loaded successfully');
-  } catch (ipfsError) {
-    console.error('Failed to load Trystero IPFS:', ipfsError);
-    // Fallback to Firebase (requires config but more reliable)
-    try {
-      const trysteroFirebase = await import('trystero/firebase');
-      trystero = trysteroFirebase.joinRoom;
-      console.log('Trystero (Firebase) loaded successfully');
-    } catch (firebaseError) {
-      console.error('Failed to load Trystero Firebase:', firebaseError);
-      alert('P2P functionality unavailable. Please check your connection.');
-    }
+    // Use BitTorrent strategy (default, most reliable)
+    const trysteroModule = await import('trystero');
+    trystero = trysteroModule.joinRoom;
+    console.log('Trystero (BitTorrent) loaded successfully');
+  } catch (error) {
+    console.error('Failed to load Trystero:', error);
+    alert('P2P functionality unavailable. Please check your connection.');
   }
 }
 
@@ -1311,8 +1379,11 @@ function initializeRoom(config) {
     // Create action for sending code
     const [sendCode, getCode] = room.makeAction('code');
     
+    // Create action for play/stop state (host control)
+    const [sendPlayState, getPlayState] = room.makeAction('playState');
+    
     // Store actions for use in sync functions
-    room.actions = { sendBlocks, sendCode };
+    room.actions = { sendBlocks, sendCode, sendPlayState };
     
     // Set up block receive handler
     getBlocks((data, peerId) => {
@@ -1327,8 +1398,8 @@ function initializeRoom(config) {
       peers.get(peerId).name = peerName; // Update name in case it changed
       updatePeersDisplay();
       
-      // Re-evaluate mixed code if playing
-      if (isPlaying) {
+      // Re-evaluate mixed code if playing and we're host
+      if (isPlaying && isHost) {
         evaluateMixedCode();
       }
     });
@@ -1346,9 +1417,39 @@ function initializeRoom(config) {
       peers.get(peerId).name = peerName; // Update name in case it changed
       updatePeersDisplay();
       
-      // Re-evaluate mixed code if playing (including custom code from peers)
-      if (isPlaying) {
+      // Re-evaluate mixed code if playing and we're host (including custom code from peers)
+      if (isPlaying && isHost) {
         evaluateMixedCode();
+      }
+    });
+    
+    // Set up play state receive handler (for host control)
+    getPlayState((data, peerId) => {
+      const [playState, isHostPlayer, hostId] = data || [false, false, null];
+      console.log('Received play state from:', peerId, 'playing:', playState, 'isHost:', isHostPlayer);
+      
+      if (isHostPlayer && hostId) {
+        hostPeerId = hostId;
+        isHost = (hostId === room.selfId);
+        
+        if (playState && isHost) {
+          // Host should evaluate mixed code
+          isPlaying = true;
+          playBtn.textContent = '⏸ Pause';
+          evaluateMixedCode();
+        } else if (!playState && isHost) {
+          // Host stopped
+          isPlaying = false;
+          playBtn.textContent = '▶ Play';
+          if (hush) hush();
+          else if (evaluate) evaluate('hush()');
+        } else if (!isHost && isPlaying) {
+          // Remote player - stop local playback when host stops
+          isPlaying = false;
+          playBtn.textContent = '▶ Play';
+          if (hush) hush();
+          else if (evaluate) evaluate('hush()');
+        }
       }
     });
     
@@ -1360,6 +1461,12 @@ function initializeRoom(config) {
       }
       updatePeersDisplay();
       
+      // If we're the first one or become host, claim host role
+      if (peers.size === 0) {
+        isHost = true;
+        hostPeerId = room.selfId;
+      }
+      
       // Send our blocks and code to the new peer
       setTimeout(() => {
         syncBlocksToPeers();
@@ -1369,12 +1476,26 @@ function initializeRoom(config) {
     
     room.onPeerLeave((peerId) => {
       console.log('Peer left:', peerId);
+      
+      // If host left, take over host role if we're the only one left
+      if (hostPeerId === peerId && peers.size > 0) {
+        isHost = true;
+        hostPeerId = room.selfId;
+        console.log('Host left, we are now the host');
+      }
+      
       peers.delete(peerId);
       updatePeersDisplay();
       
-      // Re-evaluate if playing
-      if (isPlaying) {
+      // Re-evaluate if playing and we're host
+      if (isPlaying && isHost) {
         evaluateMixedCode();
+      } else if (isPlaying && !isHost) {
+        // Stop local playback if not host
+        isPlaying = false;
+        playBtn.textContent = '▶ Play';
+        if (hush) hush();
+        else if (evaluate) evaluate('hush()');
       }
     });
     
@@ -1396,7 +1517,8 @@ function initializeRoom(config) {
 // Update connection UI
 function updateConnectionUI() {
   if (isConnected) {
-    roomStatus.textContent = 'Connected';
+    const hostStatus = isHost ? ' (Host)' : '';
+    roomStatus.textContent = 'Connected' + hostStatus;
     roomStatus.classList.add('connected');
     connectBtn.textContent = 'Disconnect';
     peerCount.textContent = `${peers.size} peer${peers.size !== 1 ? 's' : ''}`;
@@ -1506,11 +1628,9 @@ joinRoomBtn.addEventListener('click', () => {
   // Update URL with room ID
   updateURLWithRoomId(roomId);
   
-  // Trystero config - using IPFS (no signup required)
-  // For production, consider Firebase or custom signaling server
+  // Trystero config - using BitTorrent (default, most reliable)
   const config = {
-    appId: 'strudelism-multiplayer',
-    announce: ['/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star']
+    appId: 'strudelism-multiplayer'
   };
   
   initializeRoom(config);
@@ -1552,8 +1672,7 @@ window.addEventListener('popstate', (event) => {
     roomIdInput.value = roomId;
     if (userName) {
       const config = {
-        appId: 'strudelism-multiplayer',
-        announce: ['/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star']
+        appId: 'strudelism-multiplayer'
       };
       initializeRoom(config);
     }
@@ -1658,8 +1777,7 @@ async function autoConnect() {
   // Auto-connect if we have a room ID
   if (roomId && trystero) {
     const config = {
-      appId: 'strudelism-multiplayer',
-      announce: ['/dns4/wrtc-star1.par.dwebops.pub/tcp/443/wss/p2p-webrtc-star']
+      appId: 'strudelism-multiplayer'
     };
     
     try {
