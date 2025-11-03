@@ -36,15 +36,25 @@ async function initializeStrudel() {
     
     await initStrudel();
     
-    // Load default samples
+    // CRITICAL: Load default samples BEFORE anything else
+    console.log('Loading Strudel samples...');
     try {
+      // Load default Tidal Cycles samples
       evaluate('samples("github:tidalcycles/dirt-samples")');
+      console.log('✓ Samples loaded successfully');
     } catch (e) {
-      console.warn('Could not load samples:', e);
+      console.warn('Could not load samples from GitHub, trying alternative:', e);
+      // Fallback - try direct URL if needed
+      try {
+        evaluate('samples("https://github.com/tidalcycles/Dirt-Samples/archive/refs/heads/master.zip")');
+      } catch (e2) {
+        console.error('Failed to load samples:', e2);
+        alert('Warning: Could not load sample library. Some presets may not work.');
+      }
     }
     
     strudelInitialized = true;
-    console.log('✓ Strudel initialized');
+    console.log('✓ Strudel initialized with samples');
   } catch (error) {
     console.error('Failed to initialize Strudel:', error);
     alert('Failed to initialize Strudel. Please refresh the page.');
@@ -405,6 +415,16 @@ function createPlayerCard(peerId, playerData, isSelf) {
       evalBtn.addEventListener('click', () => {
         const code = editor.value.trim();
         if (code && evaluate) {
+          // Ensure samples are loaded
+          if (!window.samplesLoaded) {
+            try {
+              evaluate('samples("github:tidalcycles/dirt-samples")');
+              window.samplesLoaded = true;
+            } catch (e) {
+              console.warn('Could not load samples:', e);
+            }
+          }
+          
           try {
             evaluate(code);
             console.log('✓ Local evaluation successful');
@@ -444,6 +464,17 @@ function createPlayerCard(peerId, playerData, isSelf) {
 // Evaluate mixed code - ALL PLAYERS DO THIS LOCALLY
 function evaluateMixedCode() {
   if (!evaluate) return;
+  
+  // Ensure samples are loaded first
+  if (!window.samplesLoaded) {
+    try {
+      evaluate('samples("github:tidalcycles/dirt-samples")');
+      window.samplesLoaded = true;
+      console.log('✓ Samples loaded before evaluation');
+    } catch (e) {
+      console.warn('Could not load samples:', e);
+    }
+  }
   
   // Collect all active (non-muted) codes
   const activeCodes = [];
@@ -736,7 +767,7 @@ async function init() {
   console.log('✓ App initialized - your editor is ready!');
 }
 
-// Apply preset to local editor
+// Apply preset to local editor (appends as new pattern)
 function applyPreset(presetType) {
   if (!ourPeerId) return;
   
@@ -751,30 +782,60 @@ function applyPreset(presetType) {
     bass: "n('<c1 ~ ~ c1>').s('saw').gain(0.7)"
   };
   
-  const code = presets[presetType];
-  if (code) {
-    editor.value = code;
-    
-    // Store locally
-    if (players.has(ourPeerId)) {
-      players.get(ourPeerId).code = code;
+  const newPattern = presets[presetType];
+  if (!newPattern) return;
+  
+  // Get current code
+  const currentCode = editor.value.trim();
+  let newCode = '';
+  
+  if (!currentCode || currentCode.startsWith('//')) {
+    // Empty or comment only - just add the pattern
+    newCode = newPattern;
+  } else {
+    // Check if current code already uses stack()
+    if (currentCode.includes('stack(')) {
+      // Extract existing patterns from stack()
+      // Simple approach: wrap current code and add new pattern
+      // If it's already a stack, we need to parse it properly
+      // For now, wrap everything in a new stack
+      const existingPatterns = currentCode.replace(/^setcps\([^)]+\)\s*\n?/i, '').trim();
+      newCode = `stack(\n  ${existingPatterns},\n  ${newPattern}\n)`;
+    } else {
+      // Current code is a single pattern - wrap both in stack()
+      newCode = `stack(\n  ${currentCode},\n  ${newPattern}\n)`;
     }
-    
-    // Sync to peers
-    if (isConnected) {
-      setTimeout(() => {
-        syncPlayerData();
-      }, 100);
-    }
-    
-    // If playing, re-evaluate
-    if (isPlaying) {
-      evaluateMixedCode();
-    }
-    
-    // Focus editor
-    editor.focus();
   }
+  
+  // Add setcps if not present
+  if (!newCode.includes('setcps')) {
+    newCode = 'setcps(1)\n' + newCode;
+  }
+  
+  // Update editor
+  editor.value = newCode;
+  
+  // Store locally
+  if (players.has(ourPeerId)) {
+    players.get(ourPeerId).code = newCode;
+  }
+  
+  // Sync to peers
+  if (isConnected) {
+    setTimeout(() => {
+      syncPlayerData();
+    }, 100);
+  }
+  
+  // If playing, re-evaluate
+  if (isPlaying) {
+    evaluateMixedCode();
+  }
+  
+  // Focus editor
+  editor.focus();
+  
+  console.log('✓ Preset applied:', presetType);
 }
 
 // Start app
