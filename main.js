@@ -11,17 +11,21 @@ let isPlaying = false;
 // Multi-player state
 let room = null;
 let peers = new Map(); // Map of peerId -> { name, blocks, code }
-let remoteBlocks = new Map(); // Map of peerId -> array of blocks (for UI display)
+let remoteBlocks = new Map(); // Map of remoteBlockId -> { peerId, peerName, block }
 let userName = '';
 let roomId = '';
 let isConnected = false;
 let isHost = false; // True if this player is the session host (controls playback)
 let hostPeerId = null; // Peer ID of the current host
 let ourPeerId = null; // Our own peer ID
+let remoteBlockIdCounter = 10000; // Start remote block IDs high to avoid conflicts
 
 // Block management (local user's blocks)
 let blocks = [];
 let blockIdCounter = 0;
+
+// Active blocks for mixing (local + enabled remote)
+let activeBlocksForMixing = [];
 
 // Preset options for dropdowns
 const PRESET_OPTIONS = {
@@ -633,27 +637,43 @@ function createEmbeddedREPL() {
   });
 }
 
-// Generate code from blocks
+// Generate code from ALL active blocks (local + enabled remote)
 function generateCodeFromBlocks() {
   const codeEditor = document.getElementById('code-editor');
   if (!codeEditor) return;
   
-  const activeBlocks = blocks.filter(b => !b.disabled && !b.muted);
+  // Build active blocks list: local blocks + enabled remote blocks
+  const activeLocalBlocks = blocks.filter(b => !b.disabled && !b.muted);
+  const activeRemoteBlocks = [];
   
-  if (activeBlocks.length === 0) {
-    if (blocks.length === 0) {
+  // Add enabled remote blocks (only if host)
+  if (isHost && isConnected) {
+    remoteBlocks.forEach((block) => {
+      if (block && !block.disabled && !block.muted) {
+        activeRemoteBlocks.push(block);
+      }
+    });
+  }
+  
+  const allActiveBlocks = [...activeLocalBlocks, ...activeRemoteBlocks];
+  
+  if (allActiveBlocks.length === 0) {
+    if (blocks.length === 0 && remoteBlocks.size === 0) {
       codeEditor.value = '// No active blocks. Add a block to start making music!';
     } else {
-      codeEditor.value = '// All blocks are muted. Unmute blocks to hear them.';
+      codeEditor.value = '// All blocks are muted or disabled. Enable blocks to hear them.';
+    }
+    if (isPlaying && evaluate) {
+      try {
+        evaluate('hush()');
+      } catch (e) {}
     }
     return;
   }
   
   // Separate blocks by type
-  const baseBlocks = activeBlocks.filter(b => ['note', 'synth', 'sample'].includes(b.type));
-  const effectBlocks = activeBlocks.filter(b => b.type === 'effect');
-  const modulationBlocks = activeBlocks.filter(b => b.type === 'modulation');
-  const structureBlocks = activeBlocks.filter(b => b.type === 'structure');
+  const baseBlocks = allActiveBlocks.filter(b => ['note', 'synth', 'sample'].includes(b.type));
+  const effectBlocks = activeLocalBlocks.filter(b => b.type === 'effect'); // Effects only from local for now
   
   // If no base blocks, show message
   if (baseBlocks.length === 0) {
@@ -661,36 +681,25 @@ function generateCodeFromBlocks() {
     return;
   }
   
-  // Generate code - combine base patterns or process individually
+  // Generate code - combine base patterns
   const patterns = [];
   
-  baseBlocks.forEach((baseBlock, idx) => {
-    let patternCode = BLOCK_TYPES[baseBlock.type].generate(baseBlock.params);
-    
-    // Apply modulations (typically for parameters like lpf, gain, etc.)
-    modulationBlocks.forEach(modBlock => {
-      const modCode = BLOCK_TYPES.modulation.generate(modBlock.params);
-      // For now, modulations are applied as separate chains
-      // In a full implementation, you'd want to associate modulations with specific base blocks
-    });
-    
-    // Apply effects
-    effectBlocks.forEach(effectBlock => {
-      const effectCode = BLOCK_TYPES.effect.generate(effectBlock.params);
-      if (effectCode) {
-        patternCode += effectCode;
-      }
-    });
-    
-    // Apply structures
-    structureBlocks.forEach(structBlock => {
-      const structCode = BLOCK_TYPES.structure.generate(structBlock.params);
-      if (structCode) {
-        patternCode += structCode;
-      }
-    });
-    
-    patterns.push(patternCode);
+  baseBlocks.forEach((baseBlock) => {
+    try {
+      let patternCode = BLOCK_TYPES[baseBlock.type].generate(baseBlock.params);
+      
+      // Apply effects (only local effects for now)
+      effectBlocks.forEach(effectBlock => {
+        const effectCode = BLOCK_TYPES.effect.generate(effectBlock.params);
+        if (effectCode) {
+          patternCode += effectCode;
+        }
+      });
+      
+      patterns.push(patternCode);
+    } catch (error) {
+      console.error('Failed to generate pattern from block:', error, baseBlock);
+    }
   });
   
   // Combine patterns - use stack() to layer them properly
@@ -709,39 +718,23 @@ function generateCodeFromBlocks() {
     code = 'setcps(1)\n' + code;
   }
   
-  // In multiplayer mode, don't update code editor with local-only code
-  // The host will show mixed code in the editor
-  if (!isConnected || !isHost) {
-    codeEditor.value = code;
-  }
-  // If host, the code editor will be updated by evaluateMixedCode()
+  // Update code editor with generated code
+  codeEditor.value = code;
   
-  // Sync blocks with peers (but not the code itself) - with debouncing
+  // Sync blocks with peers (debounced)
   if (isConnected && room) {
-    // Debounce block syncing to avoid rate limiting
     clearTimeout(window.blockSyncTimeout);
     window.blockSyncTimeout = setTimeout(() => {
       syncBlocksToPeers();
-    }, 1000); // Only sync once per second max
+    }, 1000);
   }
   
-  // In multiplayer: host evaluates mixed code (auto-updates when blocks change)
-  // In single player: evaluate local code if playing
-  if (isConnected) {
-    // Multiplayer mode
-    if (isHost && isPlaying) {
-      // Host is playing - re-evaluate mixed code with updated blocks
-      console.log('Host block changed - re-evaluating mixed code');
-      evaluateMixedCode();
-    }
-  } else {
-    // Single player mode - just evaluate local code
-    if (isPlaying && strudelInitialized && evaluate && code.trim() && !code.startsWith('//')) {
-      try {
-        evaluate(code);
-      } catch (error) {
-        console.warn('Auto-evaluation failed:', error);
-      }
+  // Auto-evaluate if playing
+  if (isPlaying && strudelInitialized && evaluate && code.trim() && !code.startsWith('//')) {
+    try {
+      evaluate(code);
+    } catch (error) {
+      console.warn('Auto-evaluation failed:', error);
     }
   }
 }
@@ -788,7 +781,7 @@ function syncCodeToPeers() {
   }
 }
 
-// Generate mixed code from all peers (only host should call this)
+// Evaluate mixed code - SIMPLIFIED: just use generateCodeFromBlocks
 function evaluateMixedCode() {
   if (!strudelInitialized || !evaluate) {
     console.warn('Cannot evaluate: strudel not initialized');
@@ -797,157 +790,11 @@ function evaluateMixedCode() {
   
   // Only host evaluates and plays
   if (isConnected && !isHost) {
-    console.log('Not host, skipping evaluateMixedCode');
     return;
   }
   
-  console.log('=== GENERATING MIXED CODE ===');
-  console.log('isHost:', isHost);
-  console.log('peers count:', peers.size);
-  console.log('local blocks:', blocks.length);
-  
-  // Check if any peer has custom code (not generated from blocks)
-  const hasCustomCode = Array.from(peers.values()).some(peer => peer.code && peer.code.trim() && !peer.code.startsWith('//'));
-  const codeEditorEl = document.getElementById('code-editor');
-  const localHasCustomCode = codeEditorEl && codeEditorEl.value.trim() && !codeEditorEl.value.startsWith('//') && !codeEditorEl.value.includes('stack(');
-  
-  // If using custom code mode, combine all custom code
-  if (hasCustomCode || localHasCustomCode) {
-    const allCode = [];
-    
-    // Add local custom code if present
-    if (localHasCustomCode) {
-      allCode.push(codeEditorEl.value.trim());
-    }
-    
-    // Add peer custom code
-    peers.forEach((peerData) => {
-      if (peerData.code && peerData.code.trim() && !peerData.code.startsWith('//')) {
-        allCode.push(peerData.code.trim());
-      }
-    });
-    
-    if (allCode.length > 0) {
-      // Combine custom code from all peers
-      let combinedCode = allCode.join('\n\n');
-      
-      // Only add setcps if not present
-      if (!combinedCode.includes('setcps')) {
-        combinedCode = 'setcps(1)\n' + combinedCode;
-      }
-      
-      try {
-        evaluate(combinedCode);
-        return;
-      } catch (error) {
-        console.warn('Custom code evaluation failed:', error);
-        // Fall through to block-based mixing
-      }
-    }
-  }
-  
-  // ALWAYS use block-based pattern mixing (ignore custom code for now)
-  const allPatterns = [];
-  
-  // Add local patterns from blocks
-  const localActiveBlocks = blocks.filter(b => b && !b.disabled && !b.muted);
-  const localBaseBlocks = localActiveBlocks.filter(b => ['note', 'synth', 'sample'].includes(b.type));
-  
-  console.log('LOCAL: Found', localActiveBlocks.length, 'active blocks,', localBaseBlocks.length, 'base blocks');
-  
-  localBaseBlocks.forEach((block, idx) => {
-    try {
-      let patternCode = BLOCK_TYPES[block.type].generate(block.params);
-      // Apply local effects/modulations to local blocks
-      const localEffects = blocks.filter(b => b && b.type === 'effect' && !b.disabled && !b.muted);
-      localEffects.forEach(effectBlock => {
-        const effectCode = BLOCK_TYPES.effect.generate(effectBlock.params);
-        if (effectCode) patternCode += effectCode;
-      });
-      console.log(`LOCAL Block ${idx + 1}:`, patternCode);
-      allPatterns.push(patternCode);
-    } catch (error) {
-      console.error('Failed to generate local pattern:', error, block);
-    }
-  });
-  
-  // Add peer patterns from blocks - CRITICAL: This must work!
-  console.log('REMOTE: Processing blocks from', peers.size, 'peers');
-  
-  peers.forEach((peerData, peerId) => {
-    if (!peerData) {
-      console.log('  Peer', peerId, ': no data');
-      return;
-    }
-    
-    const peerBlocks = peerData.blocks || [];
-    console.log(`  Peer ${peerId} (${peerData.name || 'Unknown'}):`, peerBlocks.length, 'blocks');
-    
-    if (peerBlocks.length === 0) {
-      console.log('    -> No blocks from this peer');
-      return;
-    }
-    
-    // Filter active blocks
-    const activePeerBlocks = peerBlocks.filter(b => b && !b.disabled && !b.muted);
-    const basePeerBlocks = activePeerBlocks.filter(b => ['note', 'synth', 'sample'].includes(b.type));
-    
-    console.log(`    -> ${activePeerBlocks.length} active, ${basePeerBlocks.length} base blocks`);
-    
-    basePeerBlocks.forEach((block, idx) => {
-      try {
-        const patternCode = BLOCK_TYPES[block.type].generate(block.params);
-        console.log(`    REMOTE Block ${idx + 1} (${block.type}):`, patternCode);
-        allPatterns.push(patternCode);
-      } catch (error) {
-        console.error(`    ERROR generating pattern from remote block ${idx + 1}:`, error, block);
-      }
-    });
-  });
-  
-  console.log('=== MIXING SUMMARY ===');
-  console.log('Local patterns:', localBaseBlocks.length);
-  console.log('Remote patterns:', allPatterns.length - localBaseBlocks.length);
-  console.log('TOTAL patterns to mix:', allPatterns.length);
-  
-  if (allPatterns.length === 0) {
-    console.warn('=== NO PATTERNS TO MIX ===');
-    console.warn('This should not happen if blocks exist!');
-    console.warn('Local blocks:', blocks);
-    console.warn('Peers data:', Array.from(peers.entries()));
-    return;
-  }
-  
-  // Mix all patterns together
-  let mixedCode = '';
-  if (allPatterns.length === 1) {
-    mixedCode = allPatterns[0];
-  } else {
-    mixedCode = `stack(\n  ${allPatterns.join(',\n  ')}\n)`;
-  }
-  
-  if (!mixedCode.includes('setcps')) {
-    mixedCode = 'setcps(1)\n' + mixedCode;
-  }
-  
-  console.log('=== FINAL MIXED CODE ===');
-  console.log(mixedCode);
-  console.log('========================');
-  
-  // Update code editor to show what's being played
-  if (codeEditorEl) {
-    codeEditorEl.value = mixedCode;
-  }
-  
-  try {
-    console.log('EVALUATING mixed code now...');
-    evaluate(mixedCode);
-    console.log('✓ Mixed code evaluated successfully');
-  } catch (error) {
-    console.error('✗ Mixed code evaluation FAILED:', error);
-    console.error('Failed code:', mixedCode);
-    alert('Error playing mixed code: ' + error.message);
-  }
+  // Simply regenerate code from all blocks (now includes remote blocks)
+  generateCodeFromBlocks();
 }
 
 // Create a block
@@ -1100,8 +947,89 @@ function renderBlock(block) {
 
 // Render all blocks
 function renderBlocks() {
+  const blocksContainer = document.getElementById('blocks-container');
+  if (!blocksContainer) return;
   blocksContainer.innerHTML = '';
   blocks.forEach(block => renderBlock(block));
+}
+
+// Render remote blocks (only visible to host)
+function renderRemoteBlocks() {
+  const section = document.getElementById('remote-blocks-section');
+  const container = document.getElementById('remote-blocks-container');
+  const countEl = document.getElementById('remote-blocks-count');
+  
+  if (!section || !container) return;
+  
+  // Only show if we're host and have remote blocks
+  if (isHost && remoteBlocks.size > 0) {
+    section.style.display = 'block';
+    if (countEl) {
+      countEl.textContent = remoteBlocks.size;
+    }
+  } else {
+    section.style.display = 'none';
+    return;
+  }
+  
+  container.innerHTML = '';
+  
+  remoteBlocks.forEach((block, remoteId) => {
+    const blockElement = document.createElement('div');
+    blockElement.className = `block remote-block ${block.muted ? 'muted' : ''} ${block.disabled ? 'disabled' : ''}`;
+    blockElement.id = `remote-block-${remoteId}`;
+    
+    const blockType = BLOCK_TYPES[block.type];
+    const blockIcon = blockType?.icon || '🎵';
+    
+    let paramsHTML = '';
+    if (block.params) {
+      Object.keys(block.params).forEach(key => {
+        const value = block.params[key];
+        paramsHTML += `<div class="param-display"><strong>${key}:</strong> ${value}</div>`;
+      });
+    }
+    
+    blockElement.innerHTML = `
+      <div class="block-header">
+        <span class="block-icon">${blockIcon}</span>
+        <span class="block-title">${blockType?.name || block.type} <span class="remote-badge">from ${block.peerName || 'Unknown'}</span></span>
+        <div class="block-controls">
+          <button class="btn-toggle ${block.muted ? 'active' : ''}" data-action="mute" data-id="${remoteId}" title="Mute/Unmute">
+            ${block.muted ? '🔇' : '🔊'}
+          </button>
+          <button class="btn-toggle ${block.disabled ? 'active' : ''}" data-action="disable" data-id="${remoteId}" title="Enable/Disable">
+            ${block.disabled ? '❌' : '✅'}
+          </button>
+        </div>
+      </div>
+      <div class="block-params">
+        ${paramsHTML}
+      </div>
+      <div class="block-code-preview">
+        <code>${BLOCK_TYPES[block.type]?.generate(block.params) || ''}</code>
+      </div>
+    `;
+    
+    // Add event listeners
+    blockElement.querySelector('[data-action="mute"]').addEventListener('click', () => {
+      block.muted = !block.muted;
+      renderRemoteBlocks();
+      if (isHost && isPlaying) {
+        evaluateMixedCode();
+      }
+    });
+    
+    blockElement.querySelector('[data-action="disable"]').addEventListener('click', () => {
+      block.disabled = !block.disabled;
+      renderRemoteBlocks();
+      if (isHost && isPlaying) {
+        evaluateMixedCode();
+      }
+    });
+    
+    container.appendChild(blockElement);
+  });
 }
 
 // Load preset from URL
@@ -1508,7 +1436,7 @@ function initializeRoom(config) {
     // Set up block receive handler
     getBlocks((data, peerId) => {
       const [receivedBlocks, peerName] = data || [[], 'Unknown'];
-      console.log('Received blocks from:', peerName, peerId, 'blocks:', receivedBlocks);
+      console.log('📦 Received blocks from:', peerName, peerId, 'count:', receivedBlocks.length);
       
       if (!peers.has(peerId)) {
         peers.set(peerId, { name: peerName, blocks: [], code: '' });
@@ -1517,40 +1445,70 @@ function initializeRoom(config) {
       // Store blocks from this peer
       peers.get(peerId).blocks = receivedBlocks;
       peers.get(peerId).name = peerName;
-      remoteBlocks.set(peerId, receivedBlocks);
+      
+      // Add remote blocks to our remoteBlocks map (for UI display)
+      // Remove old blocks from this peer first
+      Array.from(remoteBlocks.keys()).forEach(id => {
+        if (remoteBlocks.get(id).peerId === peerId) {
+          remoteBlocks.delete(id);
+        }
+      });
+      
+      // Add new blocks from this peer
+      receivedBlocks.forEach(block => {
+        const remoteBlockId = remoteBlockIdCounter++;
+        remoteBlocks.set(remoteBlockId, {
+          ...block,
+          id: remoteBlockId,
+          peerId: peerId,
+          peerName: peerName,
+          disabled: false, // Default to enabled
+          muted: false
+        });
+      });
+      
+      // Update UI to show remote blocks (if host)
+      if (isHost) {
+        renderRemoteBlocks();
+      }
       
       updatePeersDisplay();
       
-      // If we're host and playing, IMMEDIATELY re-evaluate with new blocks
+      // If we're host and playing, re-evaluate with new blocks
       if (isHost && isPlaying) {
-        console.log('🔥 HOST: Received', receivedBlocks.length, 'blocks from', peerName, '- RE-EVALUATING NOW');
-        // Immediate re-evaluation to include new blocks
+        console.log('🔥 HOST: Updating playback with new blocks from', peerName);
         setTimeout(() => {
           evaluateMixedCode();
-        }, 100);
+        }, 200);
       }
     });
     
     // Set up code receive handler
     getCode((data, peerId) => {
       const [receivedCode, peerName] = data || ['', 'Unknown'];
-      console.log('Received code from:', peerName, peerId);
+      console.log('📝 Received code from:', peerName, peerId, 'length:', receivedCode.length);
       
       if (!peers.has(peerId)) {
         peers.set(peerId, { name: peerName, blocks: [], code: '' });
         updatePeersDisplay();
       }
       peers.get(peerId).code = receivedCode;
-      peers.get(peerId).name = peerName; // Update name in case it changed
+      peers.get(peerId).name = peerName;
       updatePeersDisplay();
       
-      // Re-evaluate mixed code if playing and we're host (including custom code from peers)
-      if (isPlaying && isHost) {
-        // Debounce to avoid rate limiting
-        clearTimeout(window.hostEvalTimeout);
-        window.hostEvalTimeout = setTimeout(() => {
-          evaluateMixedCode();
-        }, 300);
+      // If host is playing and received custom code, re-evaluate
+      if (isHost && isPlaying && receivedCode.trim()) {
+        console.log('🔥 HOST: Received custom code from', peerName, '- re-evaluating');
+        const codeEditor = document.getElementById('code-editor');
+        if (codeEditor) {
+          // For now, if peer has custom code, just evaluate it directly
+          // TODO: Better mixing of custom code
+          try {
+            evaluate(receivedCode);
+          } catch (error) {
+            console.error('Failed to evaluate peer code:', error);
+          }
+        }
       }
     });
     
@@ -1798,11 +1756,18 @@ function updateConnectionUI() {
 
 // Update peers display
 function updatePeersDisplay() {
+  const peersContainer = document.getElementById('peers-container');
+  const peerCount = document.getElementById('peer-count');
+  if (!peersContainer || !peerCount) return;
+  
   peersContainer.innerHTML = '';
   
   if (peers.size === 0) {
     peersContainer.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.85rem; text-align: center; padding: 2rem;">No other players connected</p>';
     peerCount.textContent = '0 peers';
+    // Hide remote blocks if no peers
+    const remoteSection = document.getElementById('remote-blocks-section');
+    if (remoteSection) remoteSection.style.display = 'none';
     return;
   }
   
@@ -1811,18 +1776,24 @@ function updatePeersDisplay() {
   peers.forEach((peerData, peerId) => {
     const card = document.createElement('div');
     card.className = 'peer-card';
-    const blockCount = peerData.blocks ? peerData.blocks.filter(b => !b.disabled && !b.muted).length : 0;
+    const remoteBlocksCount = Array.from(remoteBlocks.values()).filter(b => b.peerId === peerId).length;
+    const blockCount = remoteBlocksCount || (peerData.blocks ? peerData.blocks.length : 0);
     const hasCode = peerData.code && peerData.code.trim() && !peerData.code.startsWith('//');
     card.innerHTML = `
       <h4>${peerData.name || 'Unknown'}</h4>
       <div class="peer-status">Active</div>
       <div class="peer-blocks">
-        ${blockCount > 0 ? `${blockCount} active block${blockCount !== 1 ? 's' : ''}` : ''}
+        ${blockCount > 0 ? `${blockCount} block${blockCount !== 1 ? 's' : ''}` : ''}
         ${hasCode ? (blockCount > 0 ? ' + custom code' : 'Custom code') : ''}
       </div>
     `;
     peersContainer.appendChild(card);
   });
+  
+  // Render remote blocks if host
+  if (isHost) {
+    renderRemoteBlocks();
+  }
 }
 
 // Connection event handlers
