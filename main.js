@@ -594,15 +594,15 @@ function createEmbeddedREPL() {
     overflow-x: auto;
   `;
   
-  // Sync code changes to peers in multiplayer mode (with debouncing)
+  // Sync code changes to peers in multiplayer mode (with aggressive debouncing)
   let codeSyncTimeout;
   codeEditor.addEventListener('input', () => {
     if (isConnected && room && room.actions && room.actions.sendCode) {
-      // Debounce code sync to avoid spamming peers
+      // Aggressive debounce code sync to avoid rate limiting
       clearTimeout(codeSyncTimeout);
       codeSyncTimeout = setTimeout(() => {
         syncCodeToPeers();
-      }, 500); // Wait 500ms after last keystroke
+      }, 2000); // Wait 2 seconds after last keystroke to reduce requests
     }
   });
   
@@ -711,9 +711,13 @@ function generateCodeFromBlocks() {
   
   codeEditor.value = code;
   
-  // Sync blocks with peers (but not the code itself)
+  // Sync blocks with peers (but not the code itself) - with debouncing
   if (isConnected && room) {
-    syncBlocksToPeers();
+    // Debounce block syncing to avoid rate limiting
+    clearTimeout(window.blockSyncTimeout);
+    window.blockSyncTimeout = setTimeout(() => {
+      syncBlocksToPeers();
+    }, 1000); // Only sync once per second max
   }
   
   // Generate and evaluate mixed code from all peers (only if host)
@@ -843,32 +847,47 @@ function evaluateMixedCode() {
   });
   
   // Add peer patterns from blocks
+  console.log('Processing remote blocks from', peers.size, 'peers');
   peers.forEach((peerData, peerId) => {
-    if (!peerData || !peerData.blocks || peerData.blocks.length === 0) {
-      console.log('Peer', peerId, 'has no blocks');
+    if (!peerData) {
+      console.log('Peer', peerId, 'has no data');
       return;
     }
     
-    console.log('Processing blocks from peer', peerId, '(', peerData.name, '):', peerData.blocks.length, 'blocks');
+    const peerBlocks = peerData.blocks || [];
+    if (peerBlocks.length === 0) {
+      console.log('Peer', peerId, '(', peerData.name, ') has no blocks');
+      return;
+    }
     
-    peerData.blocks.forEach(block => {
-      if (!block) return;
-      if (block.disabled || block.muted) return;
-      if (!['note', 'synth', 'sample'].includes(block.type)) return;
-      
+    console.log('Processing', peerBlocks.length, 'blocks from peer', peerId, '(', peerData.name, ')');
+    
+    // Filter active blocks
+    const activePeerBlocks = peerBlocks.filter(b => b && !b.disabled && !b.muted);
+    const basePeerBlocks = activePeerBlocks.filter(b => ['note', 'synth', 'sample'].includes(b.type));
+    
+    basePeerBlocks.forEach((block, idx) => {
       try {
         const patternCode = BLOCK_TYPES[block.type].generate(block.params);
-        console.log('Generated pattern from peer block:', patternCode);
+        console.log(`  Block ${idx + 1} (${block.type}):`, patternCode);
         allPatterns.push(patternCode);
       } catch (error) {
-        console.warn('Failed to generate pattern from peer block:', error, block);
+        console.error('Failed to generate pattern from peer block:', error, block);
       }
     });
+    
+    console.log('Added', basePeerBlocks.length, 'patterns from peer', peerData.name);
   });
   
-  console.log('Total patterns to mix:', allPatterns.length, 'local:', localBaseBlocks.length, 'remote:', peers.size);
+  console.log('=== MIXING SUMMARY ===');
+  console.log('Local patterns:', localBaseBlocks.length);
+  console.log('Remote patterns:', allPatterns.length - localBaseBlocks.length);
+  console.log('Total patterns to mix:', allPatterns.length);
   
-  if (allPatterns.length === 0) return;
+  if (allPatterns.length === 0) {
+    console.log('No patterns to mix');
+    return;
+  }
   
   // Mix all patterns together
   let mixedCode = '';
@@ -882,10 +901,16 @@ function evaluateMixedCode() {
     mixedCode = 'setcps(1)\n' + mixedCode;
   }
   
+  console.log('=== FINAL MIXED CODE ===');
+  console.log(mixedCode);
+  console.log('=======================');
+  
   try {
     evaluate(mixedCode);
+    console.log('Mixed code evaluated successfully');
   } catch (error) {
-    console.warn('Mixed code evaluation failed:', error);
+    console.error('Mixed code evaluation failed:', error);
+    console.error('Code that failed:', mixedCode);
   }
 }
 
@@ -1455,8 +1480,12 @@ function initializeRoom(config) {
       
       // If we're host and playing, re-evaluate mixed code with new blocks
       if (isHost && isPlaying) {
-        console.log('Host: Re-evaluating with new blocks from', peerName);
-        evaluateMixedCode();
+        console.log('Host: Re-evaluating with new blocks from', peerName, 'total remote blocks:', receivedBlocks.length);
+        // Small delay to batch multiple block updates
+        clearTimeout(window.hostEvalTimeout);
+        window.hostEvalTimeout = setTimeout(() => {
+          evaluateMixedCode();
+        }, 300);
       }
     });
     
@@ -1475,7 +1504,11 @@ function initializeRoom(config) {
       
       // Re-evaluate mixed code if playing and we're host (including custom code from peers)
       if (isPlaying && isHost) {
-        evaluateMixedCode();
+        // Debounce to avoid rate limiting
+        clearTimeout(window.hostEvalTimeout);
+        window.hostEvalTimeout = setTimeout(() => {
+          evaluateMixedCode();
+        }, 300);
       }
     });
     
@@ -1586,11 +1619,11 @@ function initializeRoom(config) {
         updateConnectionUI();
       }
       
-      // Send our blocks and code to the new peer
+      // Send our blocks and code to the new peer (on-demand, not spamming)
       setTimeout(() => {
         syncBlocksToPeers();
         syncCodeToPeers();
-      }, 500);
+      }, 1000); // Delay to avoid rate limiting
     });
     
     room.onPeerLeave((peerId) => {
@@ -1675,10 +1708,14 @@ function initializeRoom(config) {
       
       updateConnectionUI();
       
-      // Send our blocks and code
-      syncBlocksToPeers();
-      syncCodeToPeers();
-    }, 1000);
+      // Send our blocks and code (only once, not repeatedly)
+      // Use a longer delay to avoid rate limiting
+      setTimeout(() => {
+        if (isConnected) {
+          syncBlocksToPeers();
+          syncCodeToPeers();
+        }
+      }, 1500);
     
     isConnected = true;
     updateConnectionUI();
