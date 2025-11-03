@@ -146,23 +146,31 @@ function initializeRoom(roomName, playerNameValue) {
     // Handle player data
     getPlayerData((data, peerId) => {
       const [name, code, muted] = data || ['Unknown', '', false];
-      console.log('📦 Received from:', name, peerId, 'code length:', code.length);
+      console.log('📦 Received from:', name, peerId, 'code length:', code.length, 'muted:', muted);
       
-      // Update player data
+      // Update player data - CRITICAL: Always update with latest data
       if (!players.has(peerId)) {
         players.set(peerId, { name, code, muted });
+        console.log('  → Added new player:', name);
       } else {
         const existing = players.get(peerId);
+        const codeChanged = existing.code !== code;
+        const mutedChanged = existing.muted !== muted;
+        
         existing.name = name;
         existing.code = code;
         existing.muted = muted;
+        
+        console.log(`  → Updated player: ${name}, code changed: ${codeChanged}, muted changed: ${mutedChanged}`);
       }
       
       // Update display (this will update the editor for remote players if host)
       updatePlayersDisplay();
       
       // If playing, immediately re-evaluate mixed code (all players)
+      // This ensures remote blocks are included in playback
       if (isPlaying) {
+        console.log('🔄 Re-evaluating mixed code with updated remote data');
         clearTimeout(window.remoteEvalTimeout);
         window.remoteEvalTimeout = setTimeout(() => {
           evaluateMixedCode().catch(e => console.error('Remote eval error:', e));
@@ -250,15 +258,25 @@ function determineHost() {
 
 // Sync player data to peers
 function syncPlayerData() {
-  if (!room || !room.actions) return;
+  if (!room || !room.actions || !isConnected) return;
   
   const codeEditor = document.getElementById(`code-${ourPeerId}`);
   const code = codeEditor ? codeEditor.value : '';
-  const muted = players.get(ourPeerId)?.muted || false;
+  // Get muted state from players map (updated by mute button)
+  const currentData = players.get(ourPeerId);
+  const muted = currentData ? currentData.muted : false;
+  
+  // Update players map with current code and muted state
+  if (currentData) {
+    currentData.code = code;
+    currentData.muted = muted;
+  } else {
+    players.set(ourPeerId, { name: playerName, code, muted });
+  }
   
   try {
     room.actions.sendPlayerData([playerName, code, muted]);
-    console.log('📤 Sent player data');
+    console.log('📤 Sent player data - code length:', code.length, 'muted:', muted);
   } catch (error) {
     console.warn('Failed to sync:', error);
   }
@@ -275,9 +293,12 @@ function updatePlayersDisplay() {
   // CRITICAL: Always ensure self is in players map with current editor value
   const selfEditor = document.getElementById(`code-${ourPeerId}`);
   const selfCode = selfEditor ? selfEditor.value : '';
-  const selfMuted = players.get(ourPeerId)?.muted || false;
+  // Get muted state from players map, but update it if button was clicked
+  const currentSelfData = players.get(ourPeerId);
+  const selfMuted = currentSelfData ? currentSelfData.muted : false;
   const selfName = playerName || `Player${Math.floor(Math.random() * 1000)}`;
   
+  // Update self in players map (preserve muted state)
   players.set(ourPeerId, { name: selfName, code: selfCode, muted: selfMuted });
   
   // Get all peer IDs (including self)
@@ -492,15 +513,44 @@ function createPlayerCard(peerId, playerData, isSelf) {
   const muteBtn = card.querySelector('[data-action="mute"]');
   if (muteBtn) {
     muteBtn.addEventListener('click', () => {
-      const muted = !playerData.muted;
-      playerData.muted = muted;
+      // Get current muted state
+      const currentData = players.get(peerId);
+      const newMutedState = !(currentData ? currentData.muted : playerData.muted);
       
-      // Sync mute state if it's our own or if we're muting someone
+      // Update in players map
+      if (currentData) {
+        currentData.muted = newMutedState;
+      } else {
+        playerData.muted = newMutedState;
+        players.set(peerId, playerData);
+      }
+      
+      console.log('🔇 Mute toggled for', peerId, ':', newMutedState);
+      
+      // Sync mute state if it's our own
       if (peerId === ourPeerId) {
         syncPlayerData();
       }
       
-      updatePlayersDisplay();
+      // Update UI immediately
+      const cardEl = document.getElementById(`player-${peerId}`);
+      if (cardEl) {
+        cardEl.className = `player-card ${peerId === ourPeerId ? 'self' : ''} ${newMutedState ? 'muted' : ''}`;
+        const muteBtnEl = cardEl.querySelector('[data-action="mute"]');
+        if (muteBtnEl) {
+          muteBtnEl.className = `btn-toggle ${newMutedState ? 'active' : ''}`;
+          muteBtnEl.innerHTML = newMutedState ? '🔇' : '🔊';
+        }
+        const statusEl = cardEl.querySelector('.player-status');
+        if (statusEl) {
+          const code = currentData ? (currentData.code || '') : '';
+          const codeLines = code ? code.split('\n').length : 0;
+          statusEl.innerHTML = `
+            <span>${newMutedState ? '🔇 Muted' : '🔊 Active'}</span>
+            <span>${codeLines > 0 ? codeLines + ' lines' : 'No code'}</span>
+          `;
+        }
+      }
       
       // Re-evaluate if playing (all players do this)
       if (isPlaying) {
@@ -539,13 +589,39 @@ async function evaluateMixedCode() {
   const activeCodes = [];
   const activePlayers = [];
   
+  console.log('🔍 Collecting codes from', players.size, 'players');
+  
   players.forEach((playerData, peerId) => {
-    const code = playerData.code ? playerData.code.trim() : '';
-    if (!playerData.muted && code && !code.startsWith('//')) {
+    // For local player, always get code from editor (most up-to-date)
+    let code = '';
+    if (peerId === ourPeerId) {
+      const editor = document.getElementById(`code-${ourPeerId}`);
+      code = editor ? editor.value.trim() : '';
+      // Update players map with current editor value
+      if (playerData) {
+        playerData.code = code;
+      }
+    } else {
+      // For remote players, use code from players map
+      code = playerData.code ? playerData.code.trim() : '';
+    }
+    
+    const isMuted = playerData.muted || false;
+    
+    console.log(`  Player ${peerId} (${playerData.name}): muted=${isMuted}, code length=${code.length}`);
+    
+    if (!isMuted && code && !code.startsWith('//')) {
       activeCodes.push(code);
       activePlayers.push(playerData.name || peerId);
+      console.log(`  ✓ Added code from ${playerData.name || peerId}`);
+    } else if (isMuted) {
+      console.log(`  ✗ Skipped ${playerData.name || peerId} (muted)`);
+    } else if (!code || code.startsWith('//')) {
+      console.log(`  ✗ Skipped ${playerData.name || peerId} (no code)`);
     }
   });
+  
+  console.log('📊 Total active codes:', activeCodes.length, 'from players:', activePlayers.join(', '));
   
   if (activeCodes.length === 0) {
     if (isPlaying) {
@@ -558,15 +634,18 @@ async function evaluateMixedCode() {
     return;
   }
   
-  // Combine all codes with stack()
+  // Combine all codes with stack() - ALL PLAYERS PLAY TOGETHER
   let mixedCode = '';
-  if (activeCodes.length === 1) {
+  if (activeCodes.length === 0) {
+    mixedCode = '// No active players';
+  } else if (activeCodes.length === 1) {
     mixedCode = activeCodes[0];
   } else {
+    // Stack all codes - this makes them play simultaneously in sync
     mixedCode = `stack(\n  ${activeCodes.map((code, idx) => `  // ${activePlayers[idx]}\n  ${code}`).join(',\n')}\n)`;
   }
   
-  // Add setcps if not present
+  // Add setcps if not present (ensures all players sync to same tempo)
   if (!mixedCode.includes('setcps')) {
     mixedCode = 'setcps(1)\n' + mixedCode;
   }
@@ -586,14 +665,18 @@ async function evaluateMixedCode() {
         console.log('✓ Samples loaded before evaluation');
       }
       
-      // Evaluate the mixed code
+      // Evaluate the mixed code - this plays ALL players' code together
+      console.log('🎵 Evaluating mixed code with', activeCodes.length, 'players:', activePlayers.join(', '));
       evaluate(mixedCode);
-      console.log('✓ Mixed code evaluated:', activeCodes.length, 'players:', activePlayers.join(', '));
+      console.log('✓ Mixed code evaluated successfully - all players should hear the same mix!');
     } catch (error) {
       console.error('✗ Evaluation failed:', error);
       console.error('Mixed code was:', mixedCode);
       updateMasterCode(`// Error: ${error.message}\n\n${mixedCode}`);
     }
+  } else {
+    // Not playing - just update the preview
+    console.log('📝 Mixed code preview updated (not playing)');
   }
 }
 
