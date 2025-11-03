@@ -87,14 +87,27 @@ function initializeRoom(roomName, playerNameValue) {
     // Handle player data
     getPlayerData((data, peerId) => {
       const [name, code, muted] = data || ['Unknown', '', false];
-      console.log('📦 Received from:', name, peerId);
+      console.log('📦 Received from:', name, peerId, 'code length:', code.length);
       
-      players.set(peerId, { name, code, muted });
+      // Update player data
+      if (!players.has(peerId)) {
+        players.set(peerId, { name, code, muted });
+      } else {
+        const existing = players.get(peerId);
+        existing.name = name;
+        existing.code = code;
+        existing.muted = muted;
+      }
+      
+      // Update display (this will update the editor for remote players if host)
       updatePlayersDisplay();
       
-      // If host and playing, re-evaluate
+      // If host and playing, immediately re-evaluate mixed code
       if (isHost && isPlaying) {
-        evaluateMixedCode();
+        clearTimeout(window.remoteEvalTimeout);
+        window.remoteEvalTimeout = setTimeout(() => {
+          evaluateMixedCode();
+        }, 200);
       }
     });
     
@@ -208,28 +221,80 @@ function updatePlayersDisplay() {
   const grid = document.getElementById('players-grid');
   if (!grid) return;
   
-  grid.innerHTML = '';
-  
-  // Add self first
+  // Always ensure self is in players map
   const selfCode = document.getElementById(`code-${ourPeerId}`)?.value || '';
   const selfMuted = players.get(ourPeerId)?.muted || false;
   players.set(ourPeerId, { name: playerName, code: selfCode, muted: selfMuted });
   
-  // Render all players
-  players.forEach((playerData, peerId) => {
+  // Get all peer IDs (including self)
+  const allPeerIds = Array.from(players.keys());
+  
+  // Create cards for missing players, update existing ones
+  allPeerIds.forEach(peerId => {
+    const playerData = players.get(peerId);
     const isSelf = peerId === ourPeerId;
-    const card = createPlayerCard(peerId, playerData, isSelf);
-    grid.appendChild(card);
+    
+    let card = document.getElementById(`player-${peerId}`);
+    
+    if (!card) {
+      // Create new card
+      card = createPlayerCard(peerId, playerData, isSelf);
+      grid.appendChild(card);
+    } else {
+      // Update existing card (for remote players)
+      card = createPlayerCard(peerId, playerData, isSelf);
+    }
+  });
+  
+  // Remove cards for players that left (but keep self)
+  Array.from(grid.children).forEach(child => {
+    const playerId = child.id.replace('player-', '');
+    if (!players.has(playerId) && playerId !== ourPeerId) {
+      child.remove();
+    }
   });
 }
 
 // Create player card
 function createPlayerCard(peerId, playerData, isSelf) {
+  // Check if card already exists
+  const existingCard = document.getElementById(`player-${peerId}`);
+  if (existingCard && isSelf) {
+    // Update existing card instead of recreating
+    const editor = existingCard.querySelector(`#code-${peerId}`);
+    if (editor && editor.value !== playerData.code) {
+      editor.value = playerData.code || '';
+    }
+    const muted = playerData.muted;
+    existingCard.className = `player-card ${isSelf ? 'self' : ''} ${muted ? 'muted' : ''} ${isHost && isSelf ? 'host' : ''}`;
+    
+    // Update mute button
+    const muteBtn = existingCard.querySelector('[data-action="mute"]');
+    if (muteBtn) {
+      muteBtn.className = `btn-toggle ${muted ? 'active' : ''}`;
+      muteBtn.innerHTML = muted ? '🔇' : '🔊';
+    }
+    
+    // Update status
+    const statusEl = existingCard.querySelector('.player-status');
+    if (statusEl) {
+      const codeLines = playerData.code ? playerData.code.split('\n').length : 0;
+      statusEl.innerHTML = `
+        <span>${muted ? '🔇 Muted' : '🔊 Active'}</span>
+        <span>${codeLines > 0 ? codeLines + ' lines' : 'No code'}</span>
+      `;
+    }
+    
+    return existingCard;
+  }
+  
+  // Create new card
   const card = document.createElement('div');
   card.className = `player-card ${isSelf ? 'self' : ''} ${playerData.muted ? 'muted' : ''} ${isHost && isSelf ? 'host' : ''}`;
   card.id = `player-${peerId}`;
   
   const codeEditorId = `code-${peerId}`;
+  const codeLines = playerData.code ? playerData.code.split('\n').length : 0;
   
   card.innerHTML = `
     <div class="player-header">
@@ -245,51 +310,76 @@ function createPlayerCard(peerId, playerData, isSelf) {
                 title="Mute/Unmute">
           ${playerData.muted ? '🔇' : '🔊'}
         </button>
-        ${isHost ? `
-          <button class="btn-toggle" 
-                  data-action="remove" 
-                  data-peer="${peerId}"
-                  title="Remove from mix">
-            ❌
-          </button>
-        ` : ''}
       </div>
     </div>
-    <textarea 
-      id="${codeEditorId}" 
-      class="player-code-editor" 
-      placeholder="Enter your Strudel code here...&#10;&#10;Example:&#10;s('bd ~ ~ ~')"
-      ${!isSelf ? 'readonly' : ''}
-    >${playerData.code || ''}</textarea>
+    <div class="repl-container">
+      <textarea 
+        id="${codeEditorId}" 
+        class="player-code-editor" 
+        placeholder="Enter your Strudel code here...&#10;&#10;Example:&#10;s('bd ~ ~ ~')&#10;or&#10;n('c e g').scale('C4:major')"
+        ${!isSelf && !isHost ? 'readonly' : ''}
+      >${playerData.code || ''}</textarea>
+      ${isSelf ? `
+        <button class="btn-eval" data-action="eval" data-peer="${peerId}" title="Evaluate your code locally">
+          ▶ Eval
+        </button>
+      ` : ''}
+    </div>
     <div class="player-status">
       <span>${playerData.muted ? '🔇 Muted' : '🔊 Active'}</span>
-      <span>${playerData.code ? playerData.code.split('\\n').length + ' lines' : 'No code'}</span>
+      <span>${codeLines > 0 ? codeLines + ' lines' : 'No code'}</span>
     </div>
   `;
   
   // Add event listeners
-  if (isSelf) {
-    const editor = card.querySelector(`#${codeEditorId}`);
+  const editor = card.querySelector(`#${codeEditorId}`);
+  
+  if (isSelf || isHost) {
+    // Local player or host can edit
     let syncTimeout;
     
     editor.addEventListener('input', () => {
-      // Sync code changes (debounced)
-      clearTimeout(syncTimeout);
-      syncTimeout = setTimeout(() => {
-        syncPlayerData();
-      }, 1500);
-      
-      // Store locally
       const code = editor.value;
+      
+      // Store locally immediately
       if (players.has(peerId)) {
         players.get(peerId).code = code;
       }
       
-      // If host and playing, re-evaluate
+      // Sync to peers (debounced)
+      clearTimeout(syncTimeout);
+      syncTimeout = setTimeout(() => {
+        if (peerId === ourPeerId) {
+          syncPlayerData();
+        }
+      }, 800); // Faster sync for better responsiveness
+      
+      // If host is playing, immediately re-evaluate mixed code
       if (isHost && isPlaying) {
-        evaluateMixedCode();
+        // Small delay to batch multiple edits
+        clearTimeout(window.evalTimeout);
+        window.evalTimeout = setTimeout(() => {
+          evaluateMixedCode();
+        }, 300);
       }
     });
+    
+    // Eval button for local player
+    const evalBtn = card.querySelector('[data-action="eval"]');
+    if (evalBtn && isSelf) {
+      evalBtn.addEventListener('click', () => {
+        const code = editor.value.trim();
+        if (code && evaluate) {
+          try {
+            evaluate(code);
+            console.log('✓ Local evaluation successful');
+          } catch (error) {
+            console.error('✗ Evaluation error:', error);
+            alert('Error: ' + error.message);
+          }
+        }
+      });
+    }
   }
   
   // Mute button
@@ -311,39 +401,33 @@ function createPlayerCard(peerId, playerData, isSelf) {
     });
   }
   
-  // Remove button (host only)
-  const removeBtn = card.querySelector('[data-action="remove"]');
-  if (removeBtn && isHost) {
-    removeBtn.addEventListener('click', () => {
-      if (confirm(`Remove ${playerData.name} from the mix?`)) {
-        playerData.muted = true;
-        updatePlayersDisplay();
-        if (isPlaying) {
-          evaluateMixedCode();
-        }
-      }
-    });
-  }
-  
   return card;
 }
 
 // Evaluate mixed code (host only)
 function evaluateMixedCode() {
-  if (!isHost || !isPlaying || !evaluate) return;
+  if (!isHost || !evaluate) return;
   
+  // Collect all active (non-muted) codes
   const activeCodes = [];
+  const activePlayers = [];
   
   players.forEach((playerData, peerId) => {
-    if (!playerData.muted && playerData.code && playerData.code.trim()) {
-      activeCodes.push(playerData.code.trim());
+    const code = playerData.code ? playerData.code.trim() : '';
+    if (!playerData.muted && code && !code.startsWith('//')) {
+      activeCodes.push(code);
+      activePlayers.push(playerData.name || peerId);
     }
   });
   
   if (activeCodes.length === 0) {
-    if (hush) hush();
-    else if (evaluate) evaluate('hush()');
-    updateMasterCode('// No active players');
+    if (isPlaying) {
+      if (hush) hush();
+      else if (evaluate) evaluate('hush()');
+      isPlaying = false;
+      updatePlayButton();
+    }
+    updateMasterCode('// No active players\n// Add code to your REPL and unmute to start playing');
     return;
   }
   
@@ -352,7 +436,7 @@ function evaluateMixedCode() {
   if (activeCodes.length === 1) {
     mixedCode = activeCodes[0];
   } else {
-    mixedCode = `stack(\n  ${activeCodes.join(',\n  ')}\n)`;
+    mixedCode = `stack(\n  ${activeCodes.map((code, idx) => `  // ${activePlayers[idx]}\n  ${code}`).join(',\n')}\n)`;
   }
   
   // Add setcps if not present
@@ -362,12 +446,15 @@ function evaluateMixedCode() {
   
   updateMasterCode(mixedCode);
   
-  try {
-    evaluate(mixedCode);
-    console.log('✓ Mixed code evaluated:', activeCodes.length, 'players');
-  } catch (error) {
-    console.error('✗ Evaluation failed:', error);
-    updateMasterCode(`// Error: ${error.message}\n\n${mixedCode}`);
+  // Only evaluate if playing
+  if (isPlaying) {
+    try {
+      evaluate(mixedCode);
+      console.log('✓ Mixed code evaluated:', activeCodes.length, 'players:', activePlayers.join(', '));
+    } catch (error) {
+      console.error('✗ Evaluation failed:', error);
+      updateMasterCode(`// Error: ${error.message}\n\n${mixedCode}`);
+    }
   }
 }
 
@@ -461,6 +548,8 @@ async function handlePlay() {
     // Play
     isPlaying = true;
     updatePlayButton();
+    
+    // Evaluate mixed code first
     evaluateMixedCode();
     
     // Sync play state
