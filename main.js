@@ -634,23 +634,53 @@ async function evaluateMixedCode() {
     return;
   }
   
-  // Combine all codes with stack() - ALL PLAYERS PLAY TOGETHER
+  // CRITICAL: Combine all codes into a single expression that plays simultaneously
+  // We need to extract just the pattern expressions (remove setcps, comments, etc.)
   let mixedCode = '';
-  if (activeCodes.length === 0) {
-    mixedCode = '// No active players';
-  } else if (activeCodes.length === 1) {
-    mixedCode = activeCodes[0];
+  
+  if (activeCodes.length === 1) {
+    // Single code - use as-is but ensure it's evaluated
+    let code = activeCodes[0];
+    // Remove setcps if present (we'll add it once at the end)
+    code = code.replace(/^setcps\([^)]+\)\s*\n?/gi, '').trim();
+    mixedCode = code;
   } else {
-    // Stack all codes - this makes them play simultaneously in sync
-    mixedCode = `stack(\n  ${activeCodes.map((code, idx) => `  // ${activePlayers[idx]}\n  ${code}`).join(',\n')}\n)`;
+    // Multiple codes - extract patterns and combine with stack()
+    const patterns = [];
+    
+    activeCodes.forEach((code, idx) => {
+      // Remove setcps from individual codes (we'll add one at the end)
+      let pattern = code.replace(/^setcps\([^)]+\)\s*\n?/gi, '').trim();
+      
+      // If code already contains stack(), we need to extract the patterns from it
+      // Otherwise, use the whole code as a pattern
+      if (pattern.includes('stack(')) {
+        // Code already has stack - we'll wrap it in our own stack
+        // This means all patterns in that stack will play, then combine with others
+        patterns.push(pattern);
+      } else {
+        // Single pattern - add directly
+        patterns.push(pattern);
+      }
+    });
+    
+    // Combine all patterns with stack() - they play simultaneously
+    // Format: stack(pattern1, pattern2, pattern3, ...)
+    mixedCode = `stack(\n  ${patterns.join(',\n  ')}\n)`;
   }
   
-  // Add setcps if not present (ensures all players sync to same tempo)
+  // Add setcps ONCE at the beginning (ensures all players sync to same tempo)
   if (!mixedCode.includes('setcps')) {
     mixedCode = 'setcps(1)\n' + mixedCode;
+  } else {
+    // If setcps is already in the code, ensure it's at the beginning
+    mixedCode = mixedCode.replace(/(.*?)(setcps\([^)]+\))/i, '$2\n$1');
   }
   
+  // Update master code preview (for debugging)
   updateMasterCode(mixedCode);
+  
+  console.log('🎵 Generated mixed code:\n', mixedCode);
   
   // Only evaluate if playing
   if (isPlaying) {
@@ -665,10 +695,16 @@ async function evaluateMixedCode() {
         console.log('✓ Samples loaded before evaluation');
       }
       
-      // Evaluate the mixed code - this plays ALL players' code together
+      // CRITICAL: Evaluate the mixed code as a SINGLE expression
+      // This ensures all patterns in the stack play simultaneously
       console.log('🎵 Evaluating mixed code with', activeCodes.length, 'players:', activePlayers.join(', '));
+      console.log('📝 Full code to evaluate:\n', mixedCode);
+      
+      // Evaluate - this should play ALL patterns together via stack()
       evaluate(mixedCode);
-      console.log('✓ Mixed code evaluated successfully - all players should hear the same mix!');
+      
+      console.log('✓ Mixed code evaluated successfully - ALL patterns playing together!');
+      console.log('🎧 All players should hear the same synchronized mix');
     } catch (error) {
       console.error('✗ Evaluation failed:', error);
       console.error('Mixed code was:', mixedCode);
