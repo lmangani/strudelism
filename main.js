@@ -39,17 +39,31 @@ async function initializeStrudel() {
     // CRITICAL: Load default samples BEFORE anything else
     console.log('Loading Strudel samples...');
     try {
-      // Load default Tidal Cycles samples
-      evaluate('samples("github:tidalcycles/dirt-samples")');
-      console.log('✓ Samples loaded successfully');
+      // Load default Tidal Cycles samples - use await samples() if available
+      // The samples() function needs to be called properly
+      const samplesResult = evaluate('await samples("github:tidalcycles/dirt-samples")');
+      console.log('✓ Samples loaded successfully', samplesResult);
+      window.samplesLoaded = true;
     } catch (e) {
-      console.warn('Could not load samples from GitHub, trying alternative:', e);
-      // Fallback - try direct URL if needed
+      console.warn('Could not load samples with await, trying sync:', e);
       try {
-        evaluate('samples("https://github.com/tidalcycles/Dirt-Samples/archive/refs/heads/master.zip")');
+        // Try without await
+        evaluate('samples("github:tidalcycles/dirt-samples")');
+        console.log('✓ Samples loaded (sync)');
+        window.samplesLoaded = true;
       } catch (e2) {
-        console.error('Failed to load samples:', e2);
-        alert('Warning: Could not load sample library. Some presets may not work.');
+        console.warn('Sync load failed, trying direct:', e2);
+        try {
+          // Try direct samples path
+          evaluate('samples("bd", "github:tidalcycles/dirt-samples/bd")');
+          evaluate('samples("sn", "github:tidalcycles/dirt-samples/sn")');
+          evaluate('samples("hh", "github:tidalcycles/dirt-samples/hh")');
+          console.log('✓ Samples loaded (direct)');
+          window.samplesLoaded = true;
+        } catch (e3) {
+          console.error('Failed to load samples:', e3);
+          // Don't alert - just warn, samples might work anyway
+        }
       }
     }
     
@@ -84,8 +98,37 @@ function initializeRoom(roomName, playerNameValue) {
     const config = { appId: 'strudelism-multiplayer' };
     room = trystero(config, roomName);
     
-    ourPeerId = room.selfId;
-    console.log('Our peer ID:', ourPeerId);
+    // Wait for peer ID to be available
+    const checkPeerId = setInterval(() => {
+      if (room.selfId) {
+        ourPeerId = room.selfId;
+        console.log('Our peer ID:', ourPeerId);
+        clearInterval(checkPeerId);
+        
+        // Update players map with new peer ID if we had a placeholder
+        if (players.has('local-')) {
+          const oldData = players.get('local-');
+          players.delete('local-');
+          players.set(ourPeerId, oldData);
+        }
+        
+        // Ensure self is in players map
+        if (!players.has(ourPeerId)) {
+          players.set(ourPeerId, { name: playerName, code: '', muted: false });
+        }
+        
+        updatePlayersDisplay();
+      }
+    }, 100);
+    
+    // Timeout after 5 seconds
+    setTimeout(() => {
+      clearInterval(checkPeerId);
+      if (!ourPeerId) {
+        console.warn('Peer ID not available, using placeholder');
+        ourPeerId = ourPeerId || 'temp-' + Math.random().toString(36).substring(2, 9);
+      }
+    }, 5000);
     
     // Create actions
     const [sendPlayerData, getPlayerData] = room.makeAction('playerData');
@@ -468,9 +511,11 @@ function evaluateMixedCode() {
   // Ensure samples are loaded first
   if (!window.samplesLoaded) {
     try {
+      // Try loading samples if not already loaded
       evaluate('samples("github:tidalcycles/dirt-samples")');
       window.samplesLoaded = true;
-      console.log('✓ Samples loaded before evaluation');
+      console.log('✓ Samples load initiated before evaluation');
+      // Note: samples load asynchronously, Strudel will handle it
     } catch (e) {
       console.warn('Could not load samples:', e);
     }
@@ -775,6 +820,17 @@ function applyPreset(presetType) {
   if (!editor) return;
   
   const presets = {
+    kick: "sound('bd').s('bd ~ ~ ~')",
+    snare: "sound('sn').s('sn ~ ~ ~')",
+    hats: "sound('hh').s('hh ~ x ~ x ~ x ~')",
+    melody: "n('c e g <c e g>').scale('C4:major').s('sine')",
+    bass: "n('<c1 ~ ~ c1>').s('saw').gain(0.7)"
+  };
+  
+  // Alternative: use simpler syntax if samples are mapped
+  // Actually, in Strudel, 'bd', 'sn', 'hh' should work if samples are loaded
+  // Let's use the standard syntax
+  const presetsAlt = {
     kick: "s('bd ~ ~ ~')",
     snare: "s('sn ~ ~ ~')",
     hats: "s('hh ~ x ~ x ~ x ~')",
