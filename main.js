@@ -1,1403 +1,62 @@
 // Strudel imports - will be loaded dynamically
-let initStrudel, evaluate, note, silence, hush, loadSamples;
-
-// P2P imports
-let trystero;
-
-// Initialize Strudel
+let initStrudel, evaluate, hush;
 let strudelInitialized = false;
 let isPlaying = false;
 
-// Multi-player state
+// P2P imports
+let trystero;
 let room = null;
-let peers = new Map(); // Map of peerId -> { name, blocks, code }
-let remoteBlocks = new Map(); // Map of remoteBlockId -> { peerId, peerName, block }
-let userName = '';
-let roomId = '';
+let ourPeerId = null;
+let isHost = false;
 let isConnected = false;
-let isHost = false; // True if this player is the session host (controls playback)
-let hostPeerId = null; // Peer ID of the current host
-let ourPeerId = null; // Our own peer ID
-let remoteBlockIdCounter = 10000; // Start remote block IDs high to avoid conflicts
 
-// Block management (local user's blocks)
-let blocks = [];
-let blockIdCounter = 0;
-
-// Active blocks for mixing (local + enabled remote)
-let activeBlocksForMixing = [];
-
-// Preset options for dropdowns
-const PRESET_OPTIONS = {
-  drumSamples: ['bd', 'sn', 'hh', 'cp', 'oh', 'ride', 'crash', 'tom', 'rim', 'clap', 'perc', '808', '909'],
-  scales: ['major', 'minor', 'pentatonic', 'blues', 'dorian', 'phrygian', 'lydian', 'mixolydian', 'locrian', 'harmonic', 'melodic'],
-  waves: ['sine', 'saw', 'square', 'triangle'],
-  effects: ['reverb', 'delay', 'lpf', 'hpf', 'gain', 'pan'],
-  modulationTypes: ['sine', 'saw', 'perlin'],
-  modulationTargets: ['lpf', 'hpf', 'gain', 'pan', 'room']
-};
-
-// Quick preset blocks for fast drum kit creation
-const QUICK_PRESETS = [
-  {
-    name: 'Kick',
-    icon: '🥁',
-    blocks: [
-      { type: 'sample', params: { sample: 'bd', pattern: 'x ~ ~ ~' } }
-    ]
-  },
-  {
-    name: 'Snare',
-    icon: '🎵',
-    blocks: [
-      { type: 'sample', params: { sample: 'sn', pattern: '~ ~ x ~' } }
-    ]
-  },
-  {
-    name: 'Hi-Hat',
-    icon: '🔔',
-    blocks: [
-      { type: 'sample', params: { sample: 'hh', pattern: '~ x ~ x' } }
-    ]
-  },
-  {
-    name: 'Full Kit',
-    icon: '🎤',
-    blocks: [
-      { type: 'sample', params: { sample: 'bd', pattern: 'x ~ ~ ~ x ~ ~ ~' } },
-      { type: 'sample', params: { sample: 'sn', pattern: '~ ~ x ~ ~ ~ x ~' } },
-      { type: 'sample', params: { sample: 'hh', pattern: '~ x ~ x ~ x ~ x' } }
-    ]
-  },
-  {
-    name: 'House Beat',
-    icon: '🏠',
-    blocks: [
-      { type: 'sample', params: { sample: 'bd', pattern: 'x ~ ~ ~ x ~ ~ ~ x ~ ~ ~ x ~ ~ ~' } },
-      { type: 'sample', params: { sample: 'hh', pattern: '~ x ~ x ~ x ~ x ~ x ~ x ~ x ~ x' } }
-    ]
-  },
-  {
-    name: 'Breakbeat',
-    icon: '🎶',
-    blocks: [
-      { type: 'sample', params: { sample: 'bd', pattern: 'x*2 ~ x ~ x' } },
-      { type: 'sample', params: { sample: 'sn', pattern: '~ ~ x ~ ~ x ~ ~' } },
-      { type: 'sample', params: { sample: 'hh', pattern: '~ x ~ x ~ x*2 ~ x' } }
-    ]
-  }
-];
-
-// Block types and their parameters with field types
-const BLOCK_TYPES = {
-  note: {
-    name: 'Note Pattern',
-    icon: '🎵',
-    defaultParams: {
-      pattern: '<c e g>',
-      scale: 'major',
-      octave: 4
-    },
-    paramTypes: {
-      pattern: 'text',
-      scale: 'select',
-      octave: 'number'
-    },
-    generate: (params) => {
-      return `n("${params.pattern}").scale("${params.octave === '' ? 'C' : 'C' + params.octave}:${params.scale}")`;
-    }
-  },
-  sample: {
-    name: 'Drum Sample',
-    icon: '🥁',
-    defaultParams: {
-      sample: 'bd',
-      pattern: 'x ~ x ~'
-    },
-    paramTypes: {
-      sample: 'select',
-      pattern: 'text'
-    },
-    generate: (params) => {
-      // Replace pattern characters with actual sample name
-      // Convert pattern like "x ~ x ~" to "bd ~ bd ~" using the selected sample
-      const samplePattern = params.pattern.replace(/x/g, params.sample);
-      return `s("${samplePattern}")`;
-    }
-  },
-  synth: {
-    name: 'Synth',
-    icon: '🎹',
-    defaultParams: {
-      pattern: '<c e g>',
-      wave: 'sine',
-      scale: 'major',
-      octave: 4
-    },
-    paramTypes: {
-      pattern: 'text',
-      wave: 'select',
-      scale: 'select',
-      octave: 'number'
-    },
-    generate: (params) => {
-      return `n("${params.pattern}").scale("${params.octave === '' ? 'C' : 'C' + params.octave}:${params.scale}").s("${params.wave}")`;
-    }
-  },
-  effect: {
-    name: 'Effect',
-    icon: '✨',
-    defaultParams: {
-      effect: 'reverb',
-      room: 0.5
-    },
-    paramTypes: {
-      effect: 'select',
-      room: 'number',
-      delay: 'number',
-      freq: 'number',
-      gain: 'number'
-    },
-    generate: (params) => {
-      if (params.effect === 'reverb') {
-        return `.room(${params.room || 0.5})`;
-      } else if (params.effect === 'delay') {
-        return `.delay(${params.delay || 0.25})`;
-      } else if (params.effect === 'lpf') {
-        return `.lpf(${params.freq || 2000})`;
-      } else if (params.effect === 'hpf') {
-        return `.hpf(${params.freq || 200})`;
-      } else if (params.effect === 'gain') {
-        return `.gain(${params.gain || 1})`;
-      }
-      return '';
-    }
-  },
-  modulation: {
-    name: 'Modulation',
-    icon: '🌊',
-    defaultParams: {
-      target: 'lpf',
-      type: 'sine',
-      speed: 1,
-      min: 200,
-      max: 2000
-    },
-    paramTypes: {
-      target: 'select',
-      type: 'select',
-      speed: 'number',
-      min: 'number',
-      max: 'number'
-    },
-    generate: (params) => {
-      const modFunc = params.type === 'perlin' ? 'perlin' : 'sine';
-      return `.${params.target}(${modFunc}.range(${params.min}, ${params.max}).slow(${params.speed}))`;
-    }
-  },
-  structure: {
-    name: 'Structure',
-    icon: '🏗️',
-    defaultParams: {
-      type: 'stack',
-      amount: 2
-    },
-    paramTypes: {
-      type: 'select',
-      amount: 'number',
-      n: 'number',
-      effect: 'text'
-    },
-    generate: (params) => {
-      if (params.type === 'stack') {
-        return `.stack(${params.amount})`;
-      } else if (params.type === 'sometimes') {
-        return `.sometimes(${params.effect || 'rev'})`;
-      } else if (params.type === 'every') {
-        return `.every(${params.n || 4}, ${params.effect || 'rev'})`;
-      }
-      return '';
-    }
-  }
-};
-
-// Drum-focused example patterns - REAL SAMPLES NOW!
-const EXAMPLE_PATTERNS = [
-  // Drum Patterns - THE MOST IMPORTANT! Using REAL drum samples
-  {
-    name: '4/4 Kick Pattern',
-    description: 'Standard four-on-the-floor',
-    code: 's("bd ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~ bd ~ ~ ~")',
-    category: 'Drums'
-  },
-  {
-    name: 'Full Kit Pattern',
-    description: 'Complete drum kit pattern',
-    code: 's("bd hh sn hh bd hh sn hh")',
-    category: 'Drums'
-  },
-  {
-    name: 'Kick + Snare',
-    description: 'Classic kick and snare',
-    code: 's("bd ~ sn ~ bd ~ sn ~")',
-    category: 'Drums'
-  },
-  {
-    name: 'Breakbeat',
-    description: 'Amen-style breakbeat',
-    code: 's("bd*2 ~ sn bd ~ sn ~ bd").fast(2).room(0.3)',
-    category: 'Drums'
-  },
-  {
-    name: 'Techno Kick',
-    description: 'Driving techno pattern',
-    code: 's("bd ~ bd ~ bd ~ bd ~").gain(1.1)',
-    category: 'Drums'
-  },
-  {
-    name: 'Jungle Breaks',
-    description: 'Fast jungle break pattern',
-    code: 's("bd*2 ~ sn ~ hh*2 sn ~ bd").fast(4).room(0.5)',
-    category: 'Drums'
-  },
-  {
-    name: 'Double Time',
-    description: 'Fast double-time pattern',
-    code: 's("bd bd sn ~ bd bd sn ~").fast(2)',
-    category: 'Drums'
-  },
-  {
-    name: '808 Pattern',
-    description: 'Classic 808 pattern',
-    code: 's("bd ~ ~ ~ bd ~ ~ sn ~ ~ bd ~ ~ ~ bd")',
-    category: 'Drums'
-  },
-  {
-    name: 'Hi-Hat Groove',
-    description: 'Hi-hat focused groove',
-    code: 's("~ hh ~ hh ~ hh*2 ~ hh").room(0.2)',
-    category: 'Drums'
-  },
-  {
-    name: 'Rolling Snare',
-    description: 'Snare roll pattern',
-    code: 's("~ ~ sn*4 ~ ~ ~ ~")',
-    category: 'Drums'
-  },
-  {
-    name: 'Open Hi-Hat Pattern',
-    description: 'Open hi-hat accents',
-    code: 's("bd ~ oh ~ sn ~ oh ~")',
-    category: 'Drums'
-  },
-  {
-    name: 'Cymbal Crash',
-    description: 'Crash cymbal accents',
-    code: 's("crash ~ ~ ~ ~ crash ~ ~")',
-    category: 'Drums'
-  },
-  // Melodic Patterns
-  {
-    name: 'Melodic Scale',
-    description: 'Ascending scale pattern',
-    code: 'n("<0 1 2 3 4 5 6 7>").scale("C4:major")',
-    category: 'Melody'
-  },
-  {
-    name: 'Pentatonic Melody',
-    description: 'Pentatonic scale melody',
-    code: 'n("<0 2 4 7 9 7 4 2>").scale("C4:pentatonic")',
-    category: 'Melody'
-  },
-  {
-    name: 'Blues Scale',
-    description: 'Classic blues scale pattern',
-    code: 'n("<0 3 5 6 7 10 12>").scale("C4:blues")',
-    category: 'Melody'
-  },
-  // Arpeggiators
-  {
-    name: 'Major Arpeggio',
-    description: 'Upward major chord arpeggio',
-    code: 'n("0 4 7 12").scale("C4:major").s("sine").lpf(2000)',
-    category: 'Arpeggiator'
-  },
-  {
-    name: 'Minor Arpeggio',
-    description: 'Minor chord arpeggio pattern',
-    code: 'n("0 3 7 12").scale("C4:minor").s("saw").lpf(1500)',
-    category: 'Arpeggiator'
-  },
-  // Chord Builders
-  {
-    name: 'Major Triad',
-    description: 'C major triad',
-    code: 'note("c4 e4 g4").s("saw").lpf(3000).room(0.4)',
-    category: 'Chords'
-  },
-  {
-    name: 'Minor Triad',
-    description: 'C minor triad',
-    code: 'note("c4 eb4 g4").s("saw").lpf(3000).room(0.4)',
-    category: 'Chords'
-  },
-  // Bass Lines
-  {
-    name: 'Deep Bass',
-    description: 'Deep sub bass pattern',
-    code: 'n("c2 ~ c2 ~ eb2 ~ c2 ~").s("saw").lpf(300).gain(1.2)',
-    category: 'Bass'
-  },
-  {
-    name: '808 Bass',
-    description: 'Classic 808 sub bass',
-    code: 's("bd ~ ~ bd ~ ~ bd ~").lpf(200).gain(1.3)',
-    category: 'Bass'
-  },
-  // Synths
-  {
-    name: 'Ambient Pad',
-    description: 'Slow ambient synth pad',
-    code: 'note("<c e g b>").s("saw").lpf(sine.range(500, 5000).slow(4)).room(0.8)',
-    category: 'Synth'
-  },
-  // Effects
-  {
-    name: 'Reverb Wash',
-    description: 'Heavy reverb effect',
-    code: 'note("c4").s("sine").gain(sine.range(0.2, 0.8).slow(8)).room(2)',
-    category: 'Effects'
-  },
-  {
-    name: 'Filter Sweep',
-    description: 'Automated filter sweep',
-    code: 's("bd hh sn hh").lpf(sine.range(200, 8000).slow(4))',
-    category: 'Effects'
-  }
-];
-
-// Documentation content
-const DOCUMENTATION = {
-  'Samples': {
-    description: 'Play audio samples. Common samples include: bd, sn, hh, cp, oh, etc.',
-    examples: [
-      's("bd ~ ~ bd") // Kick drum pattern',
-      's("bd hh sn hh").room(0.5) // Full kit with reverb',
-      's("bd*2 ~ hh").gain(0.8) // Multiple hits per cycle'
-    ]
-  },
-  'Synths': {
-    description: 'Generate sounds using basic waveforms: sine, saw, square, triangle',
-    examples: [
-      'note("c4 e4 g4").s("sine") // Sine wave triad',
-      'note("<c e g b>").s("saw").lpf(2000) // Saw pad with filter',
-      'note("c2").s("square").gain(sine.range(0.3, 0.7).slow(4)) // Modulated square'
-    ]
-  },
-  'Effects': {
-    description: 'Apply audio effects to patterns',
-    examples: [
-      '.room(0.5) // Reverb',
-      '.delay(0.25) // Delay',
-      '.lpf(2000) // Low-pass filter',
-      '.hpf(200) // High-pass filter',
-      '.gain(0.8) // Volume control'
-    ]
-  },
-  'Modulation': {
-    description: 'Modulate parameters using functions like sine, saw, perlin',
-    examples: [
-      '.lpf(sine.range(500, 5000).slow(4)) // Filter sweep',
-      '.gain(sine.range(0.2, 0.8).slow(8)) // Volume modulation',
-      '.pan(sine.range(-1, 1).slow(2)) // Panning'
-    ]
-  },
-  'Patterns': {
-    description: 'Create complex patterns using mini-notation',
-    examples: [
-      '"<a b c>" // Random choice',
-      '"a*2 b c" // Repeat a twice',
-      '"a [b c]" // Polyphony',
-      '"[a b] [c d] e" // Multiple polyphony',
-      '"[a b]*2 c" // Repeat polyphony'
-    ]
-  },
-  'Scales': {
-    description: 'Apply musical scales to note patterns',
-    examples: [
-      '.scale("C4:major")',
-      '.scale("A4:minor")',
-      '.scale("G4:pentatonic")',
-      '.scale("D4:dorian")'
-    ]
-  },
-  'Structure': {
-    description: 'Control how patterns are structured',
-    examples: [
-      '.stack(2) // Layer multiple times',
-      '.sometimes(rev) // Occasionally reverse',
-      '.every(4, slow(2)) // Every 4th cycle, slow down',
-      '.jux(rev) // Apply effect to right channel'
-    ]
-  },
-  'Time': {
-    description: 'Control timing and speed',
-    examples: [
-      'setcps(0.5) // Set cycles per second',
-      '.slow(2) // Slow down by factor',
-      '.fast(2) // Speed up by factor',
-      '.delay(0.5) // Delay start'
-    ]
-  }
-};
-
-// DOM elements
-const blocksContainer = document.getElementById('blocks-container');
-const playBtn = document.getElementById('play-btn');
-const stopBtn = document.getElementById('stop-btn');
-const clearBtn = document.getElementById('clear-btn');
-const presetBtn = document.getElementById('preset-btn');
-const docsBtn = document.getElementById('docs-btn');
-const addBlockBtn = document.getElementById('add-block-btn');
-const presetModal = document.getElementById('preset-modal');
-const docsModal = document.getElementById('docs-modal');
-const presetUrlInput = document.getElementById('preset-url');
-const loadPresetBtn = document.getElementById('load-preset-btn');
-const presetExamplesList = document.getElementById('preset-examples-list');
-const docsContent = document.getElementById('docs-content');
-const blockSelectModal = document.getElementById('block-select-modal');
-const blockTypesList = document.getElementById('block-types-list');
-const connectBtn = document.getElementById('connect-btn');
-const connectModal = document.getElementById('connect-modal');
-const userNameInput = document.getElementById('user-name-input');
-const roomIdInput = document.getElementById('room-id-input');
-const joinRoomBtn = document.getElementById('join-room-btn');
-const createRoomBtn = document.getElementById('create-room-btn');
-const roomStatus = document.getElementById('room-status');
-const peerCount = document.getElementById('peer-count');
-const userNameDisplay = document.getElementById('user-name-display');
-const peersContainer = document.getElementById('peers-container');
-const copyUrlBtn = document.getElementById('copy-url-btn');
-const shareRoomBtn = document.getElementById('share-room-btn');
+// Player state
+let playerName = '';
+let roomId = '';
+let players = new Map(); // peerId -> { name, code, muted }
 
 // Initialize Strudel
 async function initializeStrudel() {
   if (strudelInitialized) return;
   
   try {
-    // Try importing from npm package first (when using Vite)
+    // Try npm import first
+    let strudelModule;
     try {
-      const strudelModule = await import('@strudel/web');
-      initStrudel = strudelModule.initStrudel;
-      evaluate = strudelModule.evaluate;
-      note = strudelModule.note;
-      silence = strudelModule.silence;
-      hush = strudelModule.hush;
-      loadSamples = strudelModule.loadSamples || strudelModule.load || null;
-    } catch (npmError) {
+      strudelModule = await import('@strudel/web');
+    } catch (e) {
       // Fallback to CDN
-      console.log('Trying CDN import...');
-      const cdnModule = await import('https://unpkg.com/@strudel/web@latest/dist/strudel.js');
-      initStrudel = cdnModule.initStrudel;
-      evaluate = cdnModule.evaluate;
-      note = cdnModule.note;
-      silence = cdnModule.silence;
-      hush = cdnModule.hush;
-      loadSamples = cdnModule.loadSamples || cdnModule.load || null;
+      console.log('Loading Strudel from CDN...');
+      strudelModule = await import('https://cdn.jsdelivr.net/npm/@strudel/web@latest/dist/index.js');
     }
     
-    if (!initStrudel || !evaluate) {
-      throw new Error('Strudel functions not available');
-    }
+    initStrudel = strudelModule.initStrudel;
+    evaluate = strudelModule.evaluate;
+    hush = strudelModule.hush;
     
     await initStrudel();
     
-    // Load default samples using Strudel's built-in sample loading
-    // Use the 'github:tidalcycles/dirt-samples' syntax which is the proper way
+    // Load default samples
     try {
-      // Load samples without wrapping in silence() - just evaluate the samples() call
-      evaluate(`samples({
-        bd: ['bd/BT0AADA.wav', 'bd/BT0AAD0.wav'],
-        sn: ['sn/rytm-01-classic.wav', 'sn/rytm-00-hard.wav'],
-        sd: ['sn/rytm-01-classic.wav'],
-        hh: ['hh27/000_hh27closedhh.wav', 'hh/000_hh3closedhh.wav'],
-        cp: ['cp/mask1.wav'],
-        oh: ['oh/hihat.wav'],
-        ride: ['ride/000_ride1.wav'],
-        crash: ['crash/000_crash1.wav'],
-        tom: ['tom/000_tom1.wav'],
-        rim: ['rim/RIM01.WAV'],
-        clap: ['clap/handclap.wav'],
-        perc: ['perc/bell1.wav']
-      }, 'github:tidalcycles/dirt-samples')`);
-      console.log('Strudel default samples loaded successfully');
-    } catch (sampleError) {
-      console.warn('Could not load samples, trying alternative:', sampleError);
-      // Alternative: try loading without the github: prefix
-      try {
-        evaluate(`samples({
-          bd: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/bd/BT0A0D0.wav',
-          sn: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/sn/rytm-01-classic.wav',
-          sd: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/sn/rytm-01-classic.wav',
-          hh: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/hh/000_hh27closedhh.wav',
-          cp: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/cp/mask1.wav',
-          oh: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/oh/hihat.wav',
-          ride: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/ride/000_ride1.wav',
-          crash: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/crash/000_crash1.wav',
-          tom: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/tom/000_tom1.wav',
-          rim: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/rim/RIM01.WAV',
-          clap: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/clap/handclap.wav',
-          perc: 'https://raw.githubusercontent.com/tidalcycles/Dirt-Samples/master/perc/bell1.wav'
-        }, '')`);
-        console.log('Strudel samples loaded via direct URLs');
-      } catch (fallbackError) {
-        console.error('Sample loading failed completely:', fallbackError);
-      }
+      evaluate('samples("github:tidalcycles/dirt-samples")');
+    } catch (e) {
+      console.warn('Could not load samples:', e);
     }
     
     strudelInitialized = true;
-    console.log('Strudel initialized successfully');
-    
-    // Create embedded REPL
-    createEmbeddedREPL();
+    console.log('✓ Strudel initialized');
   } catch (error) {
     console.error('Failed to initialize Strudel:', error);
-    alert('Failed to initialize Strudel. Please check your connection and try refreshing the page. Error: ' + error.message);
+    alert('Failed to initialize Strudel. Please refresh the page.');
   }
 }
 
-// Create embedded REPL
-function createEmbeddedREPL() {
-  const replContainer = document.getElementById('repl-container');
-  replContainer.innerHTML = `
-    <textarea id="code-editor" class="code-editor" spellcheck="false"></textarea>
-    <div class="repl-controls">
-      <button id="eval-btn" class="btn btn-primary">Evaluate</button>
-      <button id="clear-code-btn" class="btn btn-secondary">Clear</button>
-    </div>
-  `;
-  
-  const codeEditor = document.getElementById('code-editor');
-  const evalBtn = document.getElementById('eval-btn');
-  const clearCodeBtn = document.getElementById('clear-code-btn');
-  
-  codeEditor.style.cssText = `
-    width: 100%;
-    flex: 1;
-    min-height: 400px;
-    padding: 1rem;
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    font-family: 'Courier New', monospace;
-    font-size: 0.9rem;
-    resize: vertical;
-    white-space: pre;
-    overflow-wrap: normal;
-    overflow-x: auto;
-  `;
-  
-  // Sync code changes to peers in multiplayer mode (with aggressive debouncing)
-  let codeSyncTimeout;
-  codeEditor.addEventListener('input', () => {
-    if (isConnected && room && room.actions && room.actions.sendCode) {
-      // Aggressive debounce code sync to avoid rate limiting
-      clearTimeout(codeSyncTimeout);
-      codeSyncTimeout = setTimeout(() => {
-        syncCodeToPeers();
-      }, 2000); // Wait 2 seconds after last keystroke to reduce requests
-    }
-  });
-  
-  evalBtn.addEventListener('click', () => {
-    const code = codeEditor.value;
-    if (code.trim() && evaluate) {
-      try {
-        evaluate(code);
-        playBtn.textContent = '⏸ Pause';
-      } catch (error) {
-        console.error('Evaluation error:', error);
-        alert('Error evaluating code: ' + error.message);
-      }
-    } else if (!evaluate) {
-      alert('Strudel is not initialized yet. Please wait...');
-    }
-  });
-  
-  clearCodeBtn.addEventListener('click', () => {
-    codeEditor.value = '';
-    generateCodeFromBlocks();
-  });
-  
-  // Auto-update code when blocks change
-  const updateCodeBtn = document.getElementById('update-code-btn');
-  updateCodeBtn.addEventListener('click', () => {
-    generateCodeFromBlocks();
-  });
-}
-
-// Generate code from ALL active blocks (local + enabled remote)
-function generateCodeFromBlocks() {
-  const codeEditor = document.getElementById('code-editor');
-  if (!codeEditor) return;
-  
-  // Build active blocks list: local blocks + enabled remote blocks
-  const activeLocalBlocks = blocks.filter(b => !b.disabled && !b.muted);
-  const activeRemoteBlocks = [];
-  
-  // Add enabled remote blocks (only if host)
-  if (isHost && isConnected) {
-    remoteBlocks.forEach((block) => {
-      if (block && !block.disabled && !block.muted) {
-        activeRemoteBlocks.push(block);
-      }
-    });
-  }
-  
-  const allActiveBlocks = [...activeLocalBlocks, ...activeRemoteBlocks];
-  
-  if (allActiveBlocks.length === 0) {
-    if (blocks.length === 0 && remoteBlocks.size === 0) {
-      codeEditor.value = '// No active blocks. Add a block to start making music!';
-    } else {
-      codeEditor.value = '// All blocks are muted or disabled. Enable blocks to hear them.';
-    }
-    if (isPlaying && evaluate) {
-      try {
-        evaluate('hush()');
-      } catch (e) {}
-    }
-    return;
-  }
-  
-  // Separate blocks by type
-  const baseBlocks = allActiveBlocks.filter(b => ['note', 'synth', 'sample'].includes(b.type));
-  const effectBlocks = activeLocalBlocks.filter(b => b.type === 'effect'); // Effects only from local for now
-  
-  // If no base blocks, show message
-  if (baseBlocks.length === 0) {
-    codeEditor.value = '// Add a Note, Synth, or Sample block first!';
-    return;
-  }
-  
-  // Generate code - combine base patterns
-  const patterns = [];
-  
-  baseBlocks.forEach((baseBlock) => {
-    try {
-      let patternCode = BLOCK_TYPES[baseBlock.type].generate(baseBlock.params);
-      
-      // Apply effects (only local effects for now)
-      effectBlocks.forEach(effectBlock => {
-        const effectCode = BLOCK_TYPES.effect.generate(effectBlock.params);
-        if (effectCode) {
-          patternCode += effectCode;
-        }
-      });
-      
-      patterns.push(patternCode);
-    } catch (error) {
-      console.error('Failed to generate pattern from block:', error, baseBlock);
-    }
-  });
-  
-  // Combine patterns - use stack() to layer them properly
-  let code = '';
-  if (patterns.length === 0) {
-    code = '// No active blocks';
-  } else if (patterns.length === 1) {
-    code = patterns[0];
-  } else {
-    // Stack multiple patterns to play them simultaneously
-    code = `stack(\n  ${patterns.join(',\n  ')}\n)`;
-  }
-  
-  // Add setcps if not present
-  if (!code.includes('setcps') && patterns.length > 0) {
-    code = 'setcps(1)\n' + code;
-  }
-  
-  // Update code editor with generated code
-  codeEditor.value = code;
-  
-  // Sync blocks with peers (debounced)
-  if (isConnected && room) {
-    clearTimeout(window.blockSyncTimeout);
-    window.blockSyncTimeout = setTimeout(() => {
-      syncBlocksToPeers();
-    }, 1000);
-  }
-  
-  // Auto-evaluate if playing
-  if (isPlaying && strudelInitialized && evaluate && code.trim() && !code.startsWith('//')) {
-    try {
-      evaluate(code);
-    } catch (error) {
-      console.warn('Auto-evaluation failed:', error);
-    }
-  }
-}
-
-// Sync blocks to peers (without sharing code)
-function syncBlocksToPeers() {
-  if (!room || !room.actions || !room.actions.sendBlocks) {
-    console.warn('Cannot sync blocks - room or actions not ready');
-    return;
-  }
-  
-  // Send block metadata (not code) to peers
-  const blockData = blocks.map(b => ({
-    id: b.id,
-    type: b.type,
-    muted: b.muted,
-    disabled: b.disabled,
-    params: b.params
-  }));
-  
-  console.log('Syncing', blockData.length, 'blocks to peers, user:', userName);
-  
-  try {
-    room.actions.sendBlocks([blockData, userName]);
-    console.log('Blocks synced successfully');
-  } catch (error) {
-    console.error('Failed to sync blocks:', error);
-  }
-}
-
-// Sync code to peers
-function syncCodeToPeers() {
-  if (!room || !room.actions || !room.actions.sendCode) return;
-  
-  const codeEditor = document.getElementById('code-editor');
-  if (!codeEditor) return;
-  
-  const code = codeEditor.value.trim();
-  
-  try {
-    room.actions.sendCode([code, userName]);
-  } catch (error) {
-    console.warn('Failed to sync code:', error);
-  }
-}
-
-// Evaluate mixed code - SIMPLIFIED: just use generateCodeFromBlocks
-function evaluateMixedCode() {
-  if (!strudelInitialized || !evaluate) {
-    console.warn('Cannot evaluate: strudel not initialized');
-    return;
-  }
-  
-  // Only host evaluates and plays
-  if (isConnected && !isHost) {
-    return;
-  }
-  
-  // Simply regenerate code from all blocks (now includes remote blocks)
-  generateCodeFromBlocks();
-}
-
-// Create a block
-function createBlock(type) {
-  const blockType = BLOCK_TYPES[type];
-  if (!blockType) return;
-  
-  const block = {
-    id: blockIdCounter++,
-    type: type,
-    muted: false,
-    disabled: false,
-    params: { ...blockType.defaultParams }
-  };
-  
-  blocks.push(block);
-  renderBlock(block);
-  generateCodeFromBlocks();
-}
-
-// Render a block with proper form controls
-function renderBlock(block) {
-  // Remove old block if exists
-  const oldBlock = document.getElementById(`block-${block.id}`);
-  if (oldBlock) {
-    oldBlock.remove();
-  }
-  
-  const blockElement = document.createElement('div');
-  blockElement.className = `block ${block.muted ? 'muted' : ''} ${block.disabled ? 'disabled' : ''}`;
-  blockElement.id = `block-${block.id}`;
-  
-  const blockType = BLOCK_TYPES[block.type];
-  
-  let paramsHTML = '';
-  Object.keys(block.params).forEach(key => {
-    const value = block.params[key];
-    const paramType = blockType.paramTypes?.[key] || 'text';
-    const label = key.charAt(0).toUpperCase() + key.slice(1);
-    
-    if (paramType === 'select') {
-      // Determine which options to use
-      let options = [];
-      if (key === 'sample') {
-        options = PRESET_OPTIONS.drumSamples;
-      } else if (key === 'scale') {
-        options = PRESET_OPTIONS.scales;
-      } else if (key === 'wave') {
-        options = PRESET_OPTIONS.waves;
-      } else if (key === 'effect') {
-        options = PRESET_OPTIONS.effects;
-      } else if (key === 'type' && block.type === 'modulation') {
-        options = PRESET_OPTIONS.modulationTypes;
-      } else if (key === 'target' && block.type === 'modulation') {
-        options = PRESET_OPTIONS.modulationTargets;
-      } else if (key === 'type' && block.type === 'structure') {
-        options = ['stack', 'sometimes', 'every'];
-      }
-      
-      paramsHTML += `
-        <div class="param-group">
-          <label class="param-label">${label}</label>
-          <select class="param-select" data-param="${key}" data-block="${block.id}">
-            ${options.map(opt => `<option value="${opt}" ${opt === value ? 'selected' : ''}>${opt}</option>`).join('')}
-          </select>
-        </div>
-      `;
-    } else if (paramType === 'number') {
-      paramsHTML += `
-        <div class="param-group">
-          <label class="param-label">${label}</label>
-          <input type="number" class="param-input" data-param="${key}" data-block="${block.id}" value="${value}" step="0.1">
-        </div>
-      `;
-    } else {
-      paramsHTML += `
-        <div class="param-group">
-          <label class="param-label">${label}</label>
-          <input type="text" class="param-input" data-param="${key}" data-block="${block.id}" value="${value}">
-        </div>
-      `;
-    }
-  });
-  
-  blockElement.innerHTML = `
-    <div class="block-header">
-      <div class="block-title">${blockType.icon} ${blockType.name}</div>
-      <div class="block-controls">
-        <button class="block-control-btn mute-btn ${block.muted ? 'active' : ''}" data-block="${block.id}" data-muted="${block.muted}" title="${block.muted ? 'Unmute' : 'Mute'}">${block.muted ? '🔇' : '🔊'}</button>
-        <button class="block-control-btn enable-btn ${!block.disabled ? 'active' : ''}" data-block="${block.id}" data-enabled="${!block.disabled}">✓</button>
-        <button class="block-control-btn delete-btn" data-block="${block.id}">🗑</button>
-      </div>
-    </div>
-    <div class="block-params">
-      ${paramsHTML}
-    </div>
-    <div class="block-code">${blockType.generate(block.params)}</div>
-  `;
-  
-  blocksContainer.appendChild(blockElement);
-  
-  // Add event listeners - CRITICAL: use closure to capture the block reference
-  const muteBtn = blockElement.querySelector('.mute-btn');
-  const enableBtn = blockElement.querySelector('.enable-btn');
-  const deleteBtn = blockElement.querySelector('.delete-btn');
-  const paramInputs = blockElement.querySelectorAll('.param-input, .param-select');
-  
-  // FIXED: Proper mute/unmute with closure
-  muteBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    // Update the block object directly
-    block.muted = !block.muted;
-    
-    // Update UI immediately
-    muteBtn.classList.toggle('active');
-    muteBtn.textContent = block.muted ? '🔇' : '🔊';
-    muteBtn.title = block.muted ? 'Unmute' : 'Mute';
-    muteBtn.setAttribute('data-muted', block.muted);
-    blockElement.classList.toggle('muted');
-    
-    // Regenerate code
-    generateCodeFromBlocks();
-  });
-  
-  enableBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    block.disabled = !block.disabled;
-    enableBtn.classList.toggle('active');
-    enableBtn.setAttribute('data-enabled', !block.disabled);
-    blockElement.classList.toggle('disabled');
-    generateCodeFromBlocks();
-  });
-  
-  deleteBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    blocks = blocks.filter(b => b.id !== block.id);
-    blockElement.remove();
-    generateCodeFromBlocks();
-  });
-  
-  paramInputs.forEach(input => {
-    input.addEventListener('change', () => {
-      block.params[input.dataset.param] = input.type === 'number' ? parseFloat(input.value) : input.value;
-      const blockCode = blockElement.querySelector('.block-code');
-      blockCode.textContent = blockType.generate(block.params);
-      generateCodeFromBlocks();
-    });
-  });
-}
-
-// Render all blocks
-function renderBlocks() {
-  const blocksContainer = document.getElementById('blocks-container');
-  if (!blocksContainer) return;
-  blocksContainer.innerHTML = '';
-  blocks.forEach(block => renderBlock(block));
-}
-
-// Render remote blocks (only visible to host)
-function renderRemoteBlocks() {
-  const section = document.getElementById('remote-blocks-section');
-  const container = document.getElementById('remote-blocks-container');
-  const countEl = document.getElementById('remote-blocks-count');
-  
-  if (!section || !container) return;
-  
-  // Only show if we're host and have remote blocks
-  if (isHost && remoteBlocks.size > 0) {
-    section.style.display = 'block';
-    if (countEl) {
-      countEl.textContent = remoteBlocks.size;
-    }
-  } else {
-    section.style.display = 'none';
-    return;
-  }
-  
-  container.innerHTML = '';
-  
-  remoteBlocks.forEach((block, remoteId) => {
-    const blockElement = document.createElement('div');
-    blockElement.className = `block remote-block ${block.muted ? 'muted' : ''} ${block.disabled ? 'disabled' : ''}`;
-    blockElement.id = `remote-block-${remoteId}`;
-    
-    const blockType = BLOCK_TYPES[block.type];
-    const blockIcon = blockType?.icon || '🎵';
-    
-    let paramsHTML = '';
-    if (block.params) {
-      Object.keys(block.params).forEach(key => {
-        const value = block.params[key];
-        paramsHTML += `<div class="param-display"><strong>${key}:</strong> ${value}</div>`;
-      });
-    }
-    
-    blockElement.innerHTML = `
-      <div class="block-header">
-        <span class="block-icon">${blockIcon}</span>
-        <span class="block-title">${blockType?.name || block.type} <span class="remote-badge">from ${block.peerName || 'Unknown'}</span></span>
-        <div class="block-controls">
-          <button class="btn-toggle ${block.muted ? 'active' : ''}" data-action="mute" data-id="${remoteId}" title="Mute/Unmute">
-            ${block.muted ? '🔇' : '🔊'}
-          </button>
-          <button class="btn-toggle ${block.disabled ? 'active' : ''}" data-action="disable" data-id="${remoteId}" title="Enable/Disable">
-            ${block.disabled ? '❌' : '✅'}
-          </button>
-        </div>
-      </div>
-      <div class="block-params">
-        ${paramsHTML}
-      </div>
-      <div class="block-code-preview">
-        <code>${BLOCK_TYPES[block.type]?.generate(block.params) || ''}</code>
-      </div>
-    `;
-    
-    // Add event listeners
-    blockElement.querySelector('[data-action="mute"]').addEventListener('click', () => {
-      block.muted = !block.muted;
-      renderRemoteBlocks();
-      if (isHost && isPlaying) {
-        evaluateMixedCode();
-      }
-    });
-    
-    blockElement.querySelector('[data-action="disable"]').addEventListener('click', () => {
-      block.disabled = !block.disabled;
-      renderRemoteBlocks();
-      if (isHost && isPlaying) {
-        evaluateMixedCode();
-      }
-    });
-    
-    container.appendChild(blockElement);
-  });
-}
-
-// Load preset from URL
-async function loadPresetFromURL(url) {
-  try {
-    // Convert GitHub raw URL if needed
-    if (url.includes('github.com') && !url.includes('raw.githubusercontent.com')) {
-      url = url.replace('/blob/', '/').replace('github.com', 'raw.githubusercontent.com');
-    }
-    
-    // Convert Gist URL
-    if (url.includes('gist.github.com')) {
-      url = url.replace('/gist.github.com/', '/gist.githubusercontent.com/') + '/raw';
-    }
-    
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Failed to fetch preset');
-    
-    const text = await response.text();
-    const preset = JSON.parse(text);
-    
-    if (preset.blocks && Array.isArray(preset.blocks)) {
-      blocks = preset.blocks.map(b => ({ ...b, id: blockIdCounter++ }));
-      renderBlocks();
-      generateCodeFromBlocks();
-      closeModal(presetModal);
-      alert('Preset loaded successfully!');
-    } else {
-      throw new Error('Invalid preset format');
-    }
-  } catch (error) {
-    console.error('Error loading preset:', error);
-    alert('Failed to load preset: ' + error.message);
-  }
-}
-
-// Render documentation
-function renderDocumentation() {
-  docsContent.innerHTML = '';
-  
-  Object.keys(DOCUMENTATION).forEach(category => {
-    const section = DOCUMENTATION[category];
-    const sectionElement = document.createElement('div');
-    sectionElement.className = 'docs-section';
-    
-    let examplesHTML = section.examples.map(ex => `<code>${ex}</code>`).join('');
-    
-    sectionElement.innerHTML = `
-      <h3>${category}</h3>
-      <p>${section.description}</p>
-      ${examplesHTML}
-    `;
-    
-    docsContent.appendChild(sectionElement);
-  });
-}
-
-// Create preset blocks
-function createPresetBlocks(preset) {
-  preset.blocks.forEach(blockDef => {
-    const block = {
-      id: blockIdCounter++,
-      type: blockDef.type,
-      muted: false,
-      disabled: false,
-      params: { ...blockDef.params }
-    };
-    blocks.push(block);
-    renderBlock(block);
-  });
-  generateCodeFromBlocks();
-  closeModal(blockSelectModal);
-}
-
-// Render block types selection
-function renderBlockTypes() {
-  blockTypesList.innerHTML = '';
-  
-  // Quick Presets Section
-  const presetSection = document.createElement('div');
-  presetSection.style.cssText = 'grid-column: 1 / -1; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border-color);';
-  presetSection.innerHTML = '<h3 style="margin-bottom: 0.75rem; color: var(--accent-primary);">Quick Presets (Add Multiple Blocks)</h3>';
-  blockTypesList.appendChild(presetSection);
-  
-  QUICK_PRESETS.forEach(preset => {
-    const card = document.createElement('div');
-    card.className = 'block-type-card';
-    card.innerHTML = `
-      <div class="icon">${preset.icon}</div>
-      <h4>${preset.name}</h4>
-      <p>Add ${preset.blocks.length} block${preset.blocks.length > 1 ? 's' : ''}</p>
-    `;
-    
-    card.addEventListener('click', () => {
-      createPresetBlocks(preset);
-    });
-    
-    blockTypesList.appendChild(card);
-  });
-  
-  // Regular Block Types Section
-  const typesSection = document.createElement('div');
-  typesSection.style.cssText = 'grid-column: 1 / -1; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-color);';
-  typesSection.innerHTML = '<h3 style="margin-bottom: 0.75rem; color: var(--accent-primary);">Individual Blocks</h3>';
-  blockTypesList.appendChild(typesSection);
-  
-  Object.keys(BLOCK_TYPES).forEach(typeKey => {
-    const blockType = BLOCK_TYPES[typeKey];
-    const card = document.createElement('div');
-    card.className = 'block-type-card';
-    card.innerHTML = `
-      <div class="icon">${blockType.icon}</div>
-      <h4>${blockType.name}</h4>
-      <p>Click to add</p>
-    `;
-    
-    card.addEventListener('click', () => {
-      createBlock(typeKey);
-      closeModal(blockSelectModal);
-    });
-    
-    blockTypesList.appendChild(card);
-  });
-}
-
-// Render preset examples
-function renderPresetExamples() {
-  presetExamplesList.innerHTML = '';
-  
-  // Group patterns by category
-  const categories = {};
-  EXAMPLE_PATTERNS.forEach(pattern => {
-    if (!categories[pattern.category]) {
-      categories[pattern.category] = [];
-    }
-    categories[pattern.category].push(pattern);
-  });
-  
-  // Create sections for each category - DRUMS FIRST!
-  const sortedCategories = Object.keys(categories).sort((a, b) => {
-    if (a === 'Drums') return -1;
-    if (b === 'Drums') return 1;
-    return a.localeCompare(b);
-  });
-  
-  sortedCategories.forEach(category => {
-    const categoryTitle = document.createElement('h4');
-    categoryTitle.className = 'preset-category-title';
-    categoryTitle.textContent = category;
-    categoryTitle.style.cssText = 'grid-column: 1 / -1; margin-top: 1rem; margin-bottom: 0.5rem; font-size: 0.9rem; color: var(--accent-primary); font-weight: 600;';
-    presetExamplesList.appendChild(categoryTitle);
-    
-    categories[category].forEach(pattern => {
-      const card = document.createElement('div');
-      card.className = 'preset-example-card';
-      card.innerHTML = `
-        <h4>${pattern.name}</h4>
-        <p>${pattern.description}</p>
-      `;
-      
-      card.addEventListener('click', () => {
-        const codeEditor = document.getElementById('code-editor');
-        if (codeEditor) {
-          codeEditor.value = pattern.code;
-        }
-        closeModal(presetModal);
-      });
-      
-      presetExamplesList.appendChild(card);
-    });
-  });
-}
-
-// Modal functions
-function openModal(modal) {
-  modal.classList.add('active');
-}
-
-function closeModal(modal) {
-  modal.classList.remove('active');
-}
-
-// Sync play state to peers
-function syncPlayState(playing) {
-  if (!room || !room.actions || !room.actions.sendPlayState) return;
-  
-  try {
-    room.actions.sendPlayState([playing, isHost, room.selfId]);
-  } catch (error) {
-    console.warn('Failed to sync play state:', error);
-  }
-}
-
-// Event listeners
-playBtn.addEventListener('click', async () => {
-  if (!strudelInitialized) {
-    await initializeStrudel();
-  }
-  
-  // In multiplayer, only host can control playback
-  if (isConnected && !isHost) {
-    // Double-check: if we're alone, we should be host
-    if (peers.size === 0) {
-      isHost = true;
-      hostPeerId = ourPeerId;
-      updateConnectionUI();
-      console.log('Auto-promoted to host (we are alone)');
-      
-      // Announce we're host
-      if (room && room.actions && room.actions.sendHostAnnounce) {
-        try {
-          room.actions.sendHostAnnounce([ourPeerId, true]);
-        } catch (e) {
-          console.warn('Failed to announce host:', e);
-        }
-      }
-    } else {
-      alert('Only the session host can control playback.');
-      return;
-    }
-  }
-  
-  if (isPlaying) {
-    // Stop
-    if (hush) {
-      try {
-        hush();
-        isPlaying = false;
-        playBtn.textContent = '▶ Play';
-        if (isConnected) syncPlayState(false);
-      } catch (error) {
-        console.error('Stop error:', error);
-        if (evaluate) {
-          try {
-            evaluate('hush()');
-            isPlaying = false;
-            playBtn.textContent = '▶ Play';
-            if (isConnected) syncPlayState(false);
-          } catch (evalError) {
-            console.error('Stop fallback error:', evalError);
-          }
-        }
-      }
-    } else if (evaluate) {
-      try {
-        evaluate('hush()');
-        isPlaying = false;
-        playBtn.textContent = '▶ Play';
-        if (isConnected) syncPlayState(false);
-      } catch (error) {
-        console.error('Stop error:', error);
-      }
-    }
-    return;
-  }
-  
-  // Start playing - IN MULTIPLAYER, ALWAYS USE MIXED CODE
-  if (!evaluate) {
-    alert('Strudel is not initialized yet. Please wait...');
-    return;
-  }
-  
-  try {
-    if (isConnected) {
-      // MULTI-PLAYER MODE: Always use mixed code from all players
-      console.log('=== HOST PLAYING: Generating mixed code ===');
-      console.log('Local blocks:', blocks.length);
-      console.log('Remote peers:', peers.size);
-      
-      // Generate and evaluate mixed code
-      evaluateMixedCode();
-    } else {
-      // Single player mode: evaluate local code
-      const codeEditor = document.getElementById('code-editor');
-      if (codeEditor && codeEditor.value.trim()) {
-        evaluate(codeEditor.value);
-      }
-    }
-    
-    isPlaying = true;
-    playBtn.textContent = '⏸ Pause';
-    if (isConnected) syncPlayState(true);
-  } catch (error) {
-    console.error('Play error:', error);
-    alert('Error playing code: ' + error.message);
-    isPlaying = false;
-  }
-});
-
-stopBtn.addEventListener('click', () => {
-  // In multiplayer, only host can control playback
-  if (isConnected && !isHost) {
-    alert('Only the session host can control playback.');
-    return;
-  }
-  
-  if (hush) {
-    try {
-      hush();
-      isPlaying = false;
-      playBtn.textContent = '▶ Play';
-      if (isConnected) syncPlayState(false);
-    } catch (error) {
-      console.error('Stop error:', error);
-      // Fallback to evaluate
-      if (evaluate) {
-        try {
-          evaluate('hush()');
-          isPlaying = false;
-          playBtn.textContent = '▶ Play';
-          if (isConnected) syncPlayState(false);
-        } catch (evalError) {
-          console.error('Stop fallback error:', evalError);
-        }
-      }
-    }
-  } else if (evaluate) {
-    try {
-      evaluate('hush()');
-      isPlaying = false;
-      playBtn.textContent = '▶ Play';
-      if (isConnected) syncPlayState(false);
-    } catch (error) {
-      console.error('Stop error:', error);
-    }
-  }
-});
-
-clearBtn.addEventListener('click', () => {
-  if (confirm('Clear all blocks?')) {
-    blocks = [];
-    renderBlocks();
-    generateCodeFromBlocks();
-  }
-});
-
-addBlockBtn.addEventListener('click', () => {
-  renderBlockTypes();
-  openModal(blockSelectModal);
-});
-
-presetBtn.addEventListener('click', () => {
-  openModal(presetModal);
-  renderPresetExamples();
-});
-
-docsBtn.addEventListener('click', () => {
-  renderDocumentation();
-  openModal(docsModal);
-});
-
-loadPresetBtn.addEventListener('click', () => {
-  const url = presetUrlInput.value.trim();
-  if (url) {
-    loadPresetFromURL(url);
-  } else {
-    alert('Please enter a URL');
-  }
-});
-
-
-// Initialize Trystero and P2P - use BitTorrent (default strategy)
+// Initialize P2P
 async function initializeP2P() {
   try {
-    // Use BitTorrent strategy (default, most reliable)
     const trysteroModule = await import('trystero');
     trystero = trysteroModule.joinRoom;
-    console.log('Trystero (BitTorrent) loaded successfully');
+    console.log('✓ Trystero loaded');
   } catch (error) {
     console.error('Failed to load Trystero:', error);
     alert('P2P functionality unavailable. Please check your connection.');
@@ -1405,646 +64,542 @@ async function initializeP2P() {
 }
 
 // Initialize room connection
-function initializeRoom(config) {
+function initializeRoom(roomName, playerNameValue) {
   if (!trystero) {
     alert('Trystero not loaded. Please refresh the page.');
     return;
   }
   
   try {
-    room = trystero(config, roomId);
+    const config = { appId: 'strudelism-multiplayer' };
+    room = trystero(config, roomName);
     
-    // Store our peer ID
     ourPeerId = room.selfId;
     console.log('Our peer ID:', ourPeerId);
     
-    // Create action for sending blocks
-    const [sendBlocks, getBlocks] = room.makeAction('blocks');
-    
-    // Create action for sending code
-    const [sendCode, getCode] = room.makeAction('code');
-    
-    // Create action for play/stop state (host control)
+    // Create actions
+    const [sendPlayerData, getPlayerData] = room.makeAction('playerData');
     const [sendPlayState, getPlayState] = room.makeAction('playState');
-    
-    // Create action for host announcement
     const [sendHostAnnounce, getHostAnnounce] = room.makeAction('hostAnnounce');
     
-    // Store actions for use in sync functions
-    room.actions = { sendBlocks, sendCode, sendPlayState, sendHostAnnounce };
+    room.actions = { sendPlayerData, sendPlayState, sendHostAnnounce };
     
-    // Set up block receive handler
-    getBlocks((data, peerId) => {
-      const [receivedBlocks, peerName] = data || [[], 'Unknown'];
-      console.log('📦 Received blocks from:', peerName, peerId, 'count:', receivedBlocks.length);
+    // Handle player data
+    getPlayerData((data, peerId) => {
+      const [name, code, muted] = data || ['Unknown', '', false];
+      console.log('📦 Received from:', name, peerId);
       
-      if (!peers.has(peerId)) {
-        peers.set(peerId, { name: peerName, blocks: [], code: '' });
-      }
+      players.set(peerId, { name, code, muted });
+      updatePlayersDisplay();
       
-      // Store blocks from this peer
-      peers.get(peerId).blocks = receivedBlocks;
-      peers.get(peerId).name = peerName;
-      
-      // Add remote blocks to our remoteBlocks map (for UI display)
-      // Remove old blocks from this peer first
-      Array.from(remoteBlocks.keys()).forEach(id => {
-        if (remoteBlocks.get(id).peerId === peerId) {
-          remoteBlocks.delete(id);
-        }
-      });
-      
-      // Add new blocks from this peer
-      receivedBlocks.forEach(block => {
-        const remoteBlockId = remoteBlockIdCounter++;
-        remoteBlocks.set(remoteBlockId, {
-          ...block,
-          id: remoteBlockId,
-          peerId: peerId,
-          peerName: peerName,
-          disabled: false, // Default to enabled
-          muted: false
-        });
-      });
-      
-      // Update UI to show remote blocks (if host)
-      if (isHost) {
-        renderRemoteBlocks();
-      }
-      
-      updatePeersDisplay();
-      
-      // If we're host and playing, re-evaluate with new blocks
+      // If host and playing, re-evaluate
       if (isHost && isPlaying) {
-        console.log('🔥 HOST: Updating playback with new blocks from', peerName);
-        setTimeout(() => {
-          evaluateMixedCode();
-        }, 200);
+        evaluateMixedCode();
       }
     });
     
-    // Set up code receive handler
-    getCode((data, peerId) => {
-      const [receivedCode, peerName] = data || ['', 'Unknown'];
-      console.log('📝 Received code from:', peerName, peerId, 'length:', receivedCode.length);
-      
-      if (!peers.has(peerId)) {
-        peers.set(peerId, { name: peerName, blocks: [], code: '' });
-        updatePeersDisplay();
-      }
-      peers.get(peerId).code = receivedCode;
-      peers.get(peerId).name = peerName;
-      updatePeersDisplay();
-      
-      // If host is playing and received custom code, re-evaluate
-      if (isHost && isPlaying && receivedCode.trim()) {
-        console.log('🔥 HOST: Received custom code from', peerName, '- re-evaluating');
-        const codeEditor = document.getElementById('code-editor');
-        if (codeEditor) {
-          // For now, if peer has custom code, just evaluate it directly
-          // TODO: Better mixing of custom code
-          try {
-            evaluate(receivedCode);
-          } catch (error) {
-            console.error('Failed to evaluate peer code:', error);
-          }
-        }
-      }
-    });
-    
-    // Set up play state receive handler (for host control)
+    // Handle play state
     getPlayState((data, peerId) => {
-      const [playState, senderIsHost, hostId] = data || [false, false, null];
-      console.log('Received play state from:', peerId, 'playing:', playState, 'senderIsHost:', senderIsHost, 'hostId:', hostId);
+      const [playing, isSenderHost] = data || [false, false];
       
-      // Update host info if provided
-      if (hostId) {
-        hostPeerId = hostId;
-        isHost = (hostId === ourPeerId);
-        console.log('Updated host info from play state - hostId:', hostId, 'we are host:', isHost);
-        updateConnectionUI();
-      }
-      
-      // Only react to play state from the actual host
-      if (senderIsHost && hostId === hostPeerId) {
-        if (playState) {
-          // Host started playing
-          if (isHost) {
-            // We are the host - evaluate mixed code (if not already playing)
-            if (!isPlaying) {
-              isPlaying = true;
-              playBtn.textContent = '⏸ Pause';
-              evaluateMixedCode();
-            }
-          } else {
-            // We're not host - just update UI, don't play locally
-            playBtn.textContent = '⏸ Pause (Host Playing)';
-            // Make sure we're not playing locally
-            if (isPlaying && hush) hush();
-            else if (isPlaying && evaluate) evaluate('hush()');
-            isPlaying = false;
-          }
-        } else {
-          // Host stopped
+      if (isSenderHost && peerId !== ourPeerId) {
+        // Remote host is controlling
+        if (playing && !isPlaying) {
+          isPlaying = true;
+          updatePlayButton();
+          evaluateMixedCode();
+        } else if (!playing && isPlaying) {
           isPlaying = false;
-          playBtn.textContent = '▶ Play';
-          if (isHost) {
-            // We're host, stop playback
-            if (hush) hush();
-            else if (evaluate) evaluate('hush()');
-          } else {
-            // Remote player - just update UI
-            // (shouldn't be playing locally anyway)
-            if (hush) hush();
-            else if (evaluate) evaluate('hush()');
-          }
+          if (hush) hush();
+          else if (evaluate) evaluate('hush()');
+          updatePlayButton();
         }
       }
     });
     
-    // Set up host announcement handler
+    // Handle host announcement
     getHostAnnounce((data, peerId) => {
-      const [announcingHostId, announcingIsHost] = data || [null, false];
-      console.log('Host announcement from:', peerId, 'hostId:', announcingHostId, 'isHost:', announcingIsHost);
-      
-      if (announcingIsHost && announcingHostId) {
-        // Someone is claiming to be host
-        if (!hostPeerId || announcingHostId < hostPeerId) {
-          // First host or earlier host (lexicographic order) wins
-          hostPeerId = announcingHostId;
-          isHost = (hostPeerId === ourPeerId);
-          console.log('Host determined:', hostPeerId, 'we are host:', isHost);
-          updateConnectionUI();
-        }
+      const [announcedHostId] = data || [null];
+      if (announcedHostId && announcedHostId < ourPeerId) {
+        isHost = false;
+        updateConnectionUI();
+        hideMasterPanel();
       }
     });
     
-    // Peer connection/disconnection handlers
+    // Peer join/leave
     room.onPeerJoin((peerId) => {
       console.log('Peer joined:', peerId);
-      if (!peers.has(peerId)) {
-        peers.set(peerId, { name: 'Unknown', blocks: [], code: '' });
-        remoteBlocks.set(peerId, []);
-      }
-      updatePeersDisplay();
-      
-      // Determine host: use lexicographic ordering of peer IDs
-      // First peer ID (alphabetically) is host
-      const allPeerIds = Array.from(peers.keys()).concat([ourPeerId]);
-      allPeerIds.sort();
-      const firstPeerId = allPeerIds[0];
-      
-      if (firstPeerId === ourPeerId) {
-        // We're first - we're the host
-        if (!isHost || hostPeerId !== ourPeerId) {
-          isHost = true;
-          hostPeerId = ourPeerId;
-          console.log('We are the host (first peer ID)');
-          updateConnectionUI();
-          
-          // Announce we're host
-          setTimeout(() => {
-            try {
-              room.actions.sendHostAnnounce([ourPeerId, true]);
-            } catch (e) {
-              console.warn('Failed to announce host:', e);
-            }
-          }, 500);
-        }
-      } else {
-        // Someone else is first
-        isHost = false;
-        hostPeerId = firstPeerId;
-        console.log('Host is:', hostPeerId, 'we are host:', isHost);
-        updateConnectionUI();
-      }
-      
-      // Send our blocks and code to the new peer (on-demand, not spamming)
+      determineHost();
       setTimeout(() => {
-        syncBlocksToPeers();
-        syncCodeToPeers();
-      }, 1000); // Delay to avoid rate limiting
+        syncPlayerData();
+      }, 500);
     });
     
     room.onPeerLeave((peerId) => {
       console.log('Peer left:', peerId);
+      players.delete(peerId);
+      updatePlayersDisplay();
+      determineHost();
       
-      // If host left, recalculate host based on remaining peers
-      if (hostPeerId === peerId) {
-        // Host left - determine new host
-        const remainingPeerIds = Array.from(peers.keys()).concat([ourPeerId]);
-        remainingPeerIds.sort();
-        const newHostId = remainingPeerIds[0];
-        
-        if (newHostId === ourPeerId) {
-          isHost = true;
-          hostPeerId = ourPeerId;
-          console.log('Host left, we are now the host');
-          
-          // Announce we're the new host
-          if (room && room.actions && room.actions.sendHostAnnounce) {
-            try {
-              room.actions.sendHostAnnounce([ourPeerId, true]);
-            } catch (e) {
-              console.warn('Failed to announce new host:', e);
-            }
-          }
-        } else {
-          isHost = false;
-          hostPeerId = newHostId;
-          console.log('Host left, new host is:', hostPeerId);
-        }
-        updateConnectionUI();
-      }
-      
-      // Remove remote blocks for this peer
-      remoteBlocks.delete(peerId);
-      
-      peers.delete(peerId);
-      updatePeersDisplay();
-      
-      // Re-evaluate if playing and we're host
-      if (isPlaying && isHost) {
+      if (isHost && isPlaying) {
         evaluateMixedCode();
-      } else if (isPlaying && !isHost) {
-        // Stop local playback if not host
-        isPlaying = false;
-        playBtn.textContent = '▶ Play';
-        if (hush) hush();
-        else if (evaluate) evaluate('hush()');
       }
     });
     
-    // When we first join, determine host based on peer IDs
+    // Determine host on join
     setTimeout(() => {
-      // If we're alone, we're definitely host
-      if (peers.size === 0) {
-        isHost = true;
-        hostPeerId = ourPeerId;
-        console.log('We are the host (alone in room)');
-      } else {
-        // Check if we're first among existing peers
-        const allPeerIds = Array.from(peers.keys()).concat([ourPeerId]);
-        allPeerIds.sort();
-        const firstPeerId = allPeerIds[0];
-        
-        if (firstPeerId === ourPeerId) {
-          isHost = true;
-          hostPeerId = ourPeerId;
-          console.log('We are the host (first peer ID among existing peers)');
-          
-          // Announce we're host
-          try {
-            room.actions.sendHostAnnounce([ourPeerId, true]);
-          } catch (e) {
-            console.warn('Failed to announce host:', e);
-          }
-        } else {
-          isHost = false;
-          hostPeerId = firstPeerId;
-          console.log('Host is:', hostPeerId, 'we are host:', isHost);
-        }
-      }
-      
-      updateConnectionUI();
-      
-      // Send our blocks and code (only once, not repeatedly)
-      // Use a longer delay to avoid rate limiting
-      setTimeout(() => {
-        if (isConnected) {
-          syncBlocksToPeers();
-          syncCodeToPeers();
-        }
-      }, 1500);
-    });
+      determineHost();
+      syncPlayerData();
+    }, 1000);
     
     isConnected = true;
     updateConnectionUI();
     
   } catch (error) {
     console.error('Failed to initialize room:', error);
-    alert('Failed to connect to room: ' + error.message);
+    alert('Failed to connect: ' + error.message);
+  }
+}
+
+// Determine host (lowest peer ID)
+function determineHost() {
+  const allPeerIds = Array.from(players.keys()).concat([ourPeerId]);
+  allPeerIds.sort();
+  const firstPeerId = allPeerIds[0];
+  
+  const wasHost = isHost;
+  isHost = (firstPeerId === ourPeerId);
+  
+  if (isHost && !wasHost) {
+    console.log('🎯 We are now the host');
+    try {
+      room.actions.sendHostAnnounce([ourPeerId]);
+    } catch (e) {
+      console.warn('Failed to announce host:', e);
+    }
+    showMasterPanel();
+  } else if (!isHost && wasHost) {
+    console.log('👤 We are no longer the host');
+    hideMasterPanel();
+  }
+  
+  updateConnectionUI();
+}
+
+// Sync player data to peers
+function syncPlayerData() {
+  if (!room || !room.actions) return;
+  
+  const codeEditor = document.getElementById(`code-${ourPeerId}`);
+  const code = codeEditor ? codeEditor.value : '';
+  const muted = players.get(ourPeerId)?.muted || false;
+  
+  try {
+    room.actions.sendPlayerData([playerName, code, muted]);
+    console.log('📤 Sent player data');
+  } catch (error) {
+    console.warn('Failed to sync:', error);
+  }
+}
+
+// Update players display
+function updatePlayersDisplay() {
+  const grid = document.getElementById('players-grid');
+  if (!grid) return;
+  
+  grid.innerHTML = '';
+  
+  // Add self first
+  const selfCode = document.getElementById(`code-${ourPeerId}`)?.value || '';
+  const selfMuted = players.get(ourPeerId)?.muted || false;
+  players.set(ourPeerId, { name: playerName, code: selfCode, muted: selfMuted });
+  
+  // Render all players
+  players.forEach((playerData, peerId) => {
+    const isSelf = peerId === ourPeerId;
+    const card = createPlayerCard(peerId, playerData, isSelf);
+    grid.appendChild(card);
+  });
+}
+
+// Create player card
+function createPlayerCard(peerId, playerData, isSelf) {
+  const card = document.createElement('div');
+  card.className = `player-card ${isSelf ? 'self' : ''} ${playerData.muted ? 'muted' : ''} ${isHost && isSelf ? 'host' : ''}`;
+  card.id = `player-${peerId}`;
+  
+  const codeEditorId = `code-${peerId}`;
+  
+  card.innerHTML = `
+    <div class="player-header">
+      <div class="player-name">
+        ${playerData.name || 'Unknown'}
+        ${isSelf ? '<span class="player-badge">You</span>' : ''}
+        ${isHost && peerId === ourPeerId ? '<span class="player-badge host">Host</span>' : ''}
+      </div>
+      <div class="player-controls">
+        <button class="btn-toggle ${playerData.muted ? 'active' : ''}" 
+                data-action="mute" 
+                data-peer="${peerId}"
+                title="Mute/Unmute">
+          ${playerData.muted ? '🔇' : '🔊'}
+        </button>
+        ${isHost ? `
+          <button class="btn-toggle" 
+                  data-action="remove" 
+                  data-peer="${peerId}"
+                  title="Remove from mix">
+            ❌
+          </button>
+        ` : ''}
+      </div>
+    </div>
+    <textarea 
+      id="${codeEditorId}" 
+      class="player-code-editor" 
+      placeholder="Enter your Strudel code here...&#10;&#10;Example:&#10;s('bd ~ ~ ~')"
+      ${!isSelf ? 'readonly' : ''}
+    >${playerData.code || ''}</textarea>
+    <div class="player-status">
+      <span>${playerData.muted ? '🔇 Muted' : '🔊 Active'}</span>
+      <span>${playerData.code ? playerData.code.split('\\n').length + ' lines' : 'No code'}</span>
+    </div>
+  `;
+  
+  // Add event listeners
+  if (isSelf) {
+    const editor = card.querySelector(`#${codeEditorId}`);
+    let syncTimeout;
+    
+    editor.addEventListener('input', () => {
+      // Sync code changes (debounced)
+      clearTimeout(syncTimeout);
+      syncTimeout = setTimeout(() => {
+        syncPlayerData();
+      }, 1500);
+      
+      // Store locally
+      const code = editor.value;
+      if (players.has(peerId)) {
+        players.get(peerId).code = code;
+      }
+      
+      // If host and playing, re-evaluate
+      if (isHost && isPlaying) {
+        evaluateMixedCode();
+      }
+    });
+  }
+  
+  // Mute button
+  const muteBtn = card.querySelector('[data-action="mute"]');
+  if (muteBtn) {
+    muteBtn.addEventListener('click', () => {
+      const muted = !playerData.muted;
+      playerData.muted = muted;
+      
+      if (peerId === ourPeerId) {
+        syncPlayerData();
+      }
+      
+      updatePlayersDisplay();
+      
+      if (isHost && isPlaying) {
+        evaluateMixedCode();
+      }
+    });
+  }
+  
+  // Remove button (host only)
+  const removeBtn = card.querySelector('[data-action="remove"]');
+  if (removeBtn && isHost) {
+    removeBtn.addEventListener('click', () => {
+      if (confirm(`Remove ${playerData.name} from the mix?`)) {
+        playerData.muted = true;
+        updatePlayersDisplay();
+        if (isPlaying) {
+          evaluateMixedCode();
+        }
+      }
+    });
+  }
+  
+  return card;
+}
+
+// Evaluate mixed code (host only)
+function evaluateMixedCode() {
+  if (!isHost || !isPlaying || !evaluate) return;
+  
+  const activeCodes = [];
+  
+  players.forEach((playerData, peerId) => {
+    if (!playerData.muted && playerData.code && playerData.code.trim()) {
+      activeCodes.push(playerData.code.trim());
+    }
+  });
+  
+  if (activeCodes.length === 0) {
+    if (hush) hush();
+    else if (evaluate) evaluate('hush()');
+    updateMasterCode('// No active players');
+    return;
+  }
+  
+  // Combine all codes with stack()
+  let mixedCode = '';
+  if (activeCodes.length === 1) {
+    mixedCode = activeCodes[0];
+  } else {
+    mixedCode = `stack(\n  ${activeCodes.join(',\n  ')}\n)`;
+  }
+  
+  // Add setcps if not present
+  if (!mixedCode.includes('setcps')) {
+    mixedCode = 'setcps(1)\n' + mixedCode;
+  }
+  
+  updateMasterCode(mixedCode);
+  
+  try {
+    evaluate(mixedCode);
+    console.log('✓ Mixed code evaluated:', activeCodes.length, 'players');
+  } catch (error) {
+    console.error('✗ Evaluation failed:', error);
+    updateMasterCode(`// Error: ${error.message}\n\n${mixedCode}`);
+  }
+}
+
+// Update master code preview
+function updateMasterCode(code) {
+  const masterCodeEl = document.getElementById('master-code');
+  if (masterCodeEl) {
+    masterCodeEl.textContent = code;
+  }
+}
+
+// Show/hide master panel
+function showMasterPanel() {
+  const panel = document.getElementById('master-panel');
+  if (panel) {
+    panel.style.display = 'block';
+  }
+}
+
+function hideMasterPanel() {
+  const panel = document.getElementById('master-panel');
+  if (panel) {
+    panel.style.display = 'none';
   }
 }
 
 // Update connection UI
 function updateConnectionUI() {
+  const status = document.getElementById('room-status');
+  const roomIdDisplay = document.getElementById('room-id-display');
+  
   if (isConnected) {
-    const hostStatus = isHost ? ' (Host)' : '';
-    roomStatus.textContent = 'Connected' + hostStatus;
-    roomStatus.classList.add('connected');
-    connectBtn.textContent = 'Disconnect';
-    peerCount.textContent = `${peers.size} peer${peers.size !== 1 ? 's' : ''}`;
-    userNameDisplay.textContent = userName || 'You';
-    userNameDisplay.style.display = 'inline-block';
-    if (shareRoomBtn) {
-      shareRoomBtn.style.display = 'inline-block';
+    if (status) {
+      status.textContent = isHost ? 'Host' : 'Connected';
+      status.className = `badge ${isHost ? 'badge-host' : 'badge-connected'}`;
+    }
+    if (roomIdDisplay) {
+      roomIdDisplay.textContent = `Room: ${roomId}`;
     }
   } else {
-    roomStatus.textContent = 'Disconnected';
-    roomStatus.classList.remove('connected');
-    connectBtn.textContent = '🔗 Connect';
-    peerCount.textContent = '0 peers';
-    userNameDisplay.style.display = 'none';
-    if (shareRoomBtn) {
-      shareRoomBtn.style.display = 'none';
+    if (status) {
+      status.textContent = 'Disconnected';
+      status.className = 'badge badge-disconnected';
     }
-    peers.clear();
-    updatePeersDisplay();
+    if (roomIdDisplay) {
+      roomIdDisplay.textContent = '';
+    }
   }
 }
 
-// Update peers display
-function updatePeersDisplay() {
-  const peersContainer = document.getElementById('peers-container');
-  const peerCount = document.getElementById('peer-count');
-  if (!peersContainer || !peerCount) return;
+// Update play button
+function updatePlayButton() {
+  const playBtn = document.getElementById('play-btn');
+  if (playBtn) {
+    playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+  }
+}
+
+// Play/Stop handlers
+async function handlePlay() {
+  if (!strudelInitialized) {
+    await initializeStrudel();
+  }
   
-  peersContainer.innerHTML = '';
-  
-  if (peers.size === 0) {
-    peersContainer.innerHTML = '<p style="color: var(--text-secondary); font-size: 0.85rem; text-align: center; padding: 2rem;">No other players connected</p>';
-    peerCount.textContent = '0 peers';
-    // Hide remote blocks if no peers
-    const remoteSection = document.getElementById('remote-blocks-section');
-    if (remoteSection) remoteSection.style.display = 'none';
+  if (!isConnected) {
+    alert('Please connect to a room first');
     return;
   }
   
-  peerCount.textContent = `${peers.size} peer${peers.size !== 1 ? 's' : ''}`;
-  
-  peers.forEach((peerData, peerId) => {
-    const card = document.createElement('div');
-    card.className = 'peer-card';
-    const remoteBlocksCount = Array.from(remoteBlocks.values()).filter(b => b.peerId === peerId).length;
-    const blockCount = remoteBlocksCount || (peerData.blocks ? peerData.blocks.length : 0);
-    const hasCode = peerData.code && peerData.code.trim() && !peerData.code.startsWith('//');
-    card.innerHTML = `
-      <h4>${peerData.name || 'Unknown'}</h4>
-      <div class="peer-status">Active</div>
-      <div class="peer-blocks">
-        ${blockCount > 0 ? `${blockCount} block${blockCount !== 1 ? 's' : ''}` : ''}
-        ${hasCode ? (blockCount > 0 ? ' + custom code' : 'Custom code') : ''}
-      </div>
-    `;
-    peersContainer.appendChild(card);
-  });
-  
-  // Render remote blocks if host
-  if (isHost) {
-    renderRemoteBlocks();
+  if (!isHost) {
+    alert('Only the host can control playback');
+    return;
   }
-}
-
-// Connection event handlers
-connectBtn.addEventListener('click', () => {
-  if (isConnected) {
-    // Disconnect
-    if (room) {
-      room.leave();
-      room = null;
-    }
-    isConnected = false;
-    updateConnectionUI();
+  
+  if (isPlaying) {
+    // Stop
+    if (hush) hush();
+    else if (evaluate) evaluate('hush()');
+    isPlaying = false;
+    updatePlayButton();
     
-    // Remove room ID from URL
-    const url = new URL(window.location);
-    url.searchParams.delete('room');
-    window.history.pushState({}, '', url);
+    // Sync play state
+    if (room && room.actions) {
+      try {
+        room.actions.sendPlayState([false, true]);
+      } catch (e) {
+        console.warn('Failed to sync play state:', e);
+      }
+    }
   } else {
-    // Show connect modal
-    openModal(connectModal);
-    // Read room ID from URL if not already set
-    if (!roomIdInput.value) {
-      readRoomIdFromURL();
-      // Generate random room ID if still empty
-      if (!roomIdInput.value) {
-        roomIdInput.value = Math.random().toString(36).substring(2, 9);
+    // Play
+    isPlaying = true;
+    updatePlayButton();
+    evaluateMixedCode();
+    
+    // Sync play state
+    if (room && room.actions) {
+      try {
+        room.actions.sendPlayState([true, true]);
+      } catch (e) {
+        console.warn('Failed to sync play state:', e);
       }
     }
   }
-});
+}
 
-createRoomBtn.addEventListener('click', () => {
-  const newRoomId = Math.random().toString(36).substring(2, 9);
-  roomIdInput.value = newRoomId;
-  updateURLWithRoomId(newRoomId);
-});
-
-joinRoomBtn.addEventListener('click', () => {
-  const name = userNameInput.value.trim();
-  let roomName = roomIdInput.value.trim();
-  
-  // If no name provided, generate one
-  if (!name) {
-    userName = `Player${Math.floor(Math.random() * 1000)}`;
-    userNameInput.value = userName;
-  } else {
-    userName = name;
+function handleStop() {
+  if (!isHost) {
+    alert('Only the host can control playback');
+    return;
   }
   
-  // If no room ID provided, generate one
+  if (hush) hush();
+  else if (evaluate) evaluate('hush()');
+  isPlaying = false;
+  updatePlayButton();
+  
+  if (room && room.actions) {
+    try {
+      room.actions.sendPlayState([false, true]);
+    } catch (e) {
+      console.warn('Failed to sync play state:', e);
+    }
+  }
+}
+
+// Connect handler
+function handleConnect() {
+  const modal = document.getElementById('connect-modal');
+  const nameInput = document.getElementById('player-name-input');
+  const roomInput = document.getElementById('room-id-input');
+  
+  // Read room ID from URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlRoomId = urlParams.get('room');
+  if (urlRoomId && !roomInput.value) {
+    roomInput.value = urlRoomId;
+  }
+  
+  // Generate default name if empty
+  if (!nameInput.value.trim()) {
+    nameInput.value = `Player${Math.floor(Math.random() * 1000)}`;
+  }
+  
+  modal.classList.add('active');
+}
+
+function handleJoin() {
+  const nameInput = document.getElementById('player-name-input');
+  const roomInput = document.getElementById('room-id-input');
+  
+  const name = nameInput.value.trim();
+  let roomName = roomInput.value.trim();
+  
+  if (!name) {
+    alert('Please enter your name');
+    return;
+  }
+  
+  // Generate room ID if empty
   if (!roomName) {
     roomName = Math.random().toString(36).substring(2, 9);
-    roomIdInput.value = roomName;
   }
   
+  playerName = name;
   roomId = roomName;
   
-  // Update URL with room ID
-  updateURLWithRoomId(roomId);
-  
-  // Trystero config - using BitTorrent (default, most reliable)
-  const config = {
-    appId: 'strudelism-multiplayer'
-  };
-  
-  initializeRoom(config);
-  closeModal(connectModal);
-});
-
-// Update URL with room ID
-function updateURLWithRoomId(roomId) {
+  // Update URL
   const url = new URL(window.location);
   url.searchParams.set('room', roomId);
-  window.history.pushState({ room: roomId }, '', url);
+  window.history.pushState({}, '', url);
+  
+  // Close modal
+  document.getElementById('connect-modal').classList.remove('active');
+  
+  // Initialize room
+  initializeRoom(roomId, playerName);
 }
 
-// Read room ID from URL on page load
-function readRoomIdFromURL() {
-  const urlParams = new URLSearchParams(window.location.search);
-  const roomIdFromURL = urlParams.get('room');
-  if (roomIdFromURL) {
-    roomIdInput.value = roomIdFromURL;
-    roomId = roomIdFromURL;
-  }
-}
-
-// Handle browser back/forward buttons
-window.addEventListener('popstate', (event) => {
-  const urlParams = new URLSearchParams(window.location.search);
-  const roomIdFromURL = urlParams.get('room');
-  if (roomIdFromURL && roomIdFromURL !== roomId && isConnected) {
-    // User navigated to a different room - disconnect and reconnect
-    if (room) {
-      room.leave();
-      room = null;
-    }
-    isConnected = false;
-    updateConnectionUI();
-    
-    // Auto-join new room if user was connected
-    roomId = roomIdFromURL;
-    roomIdInput.value = roomId;
-    if (userName) {
-      const config = {
-        appId: 'strudelism-multiplayer'
-      };
-      initializeRoom(config);
-    }
-  } else if (!roomIdFromURL && isConnected) {
-    // Room ID removed from URL - disconnect
-    if (room) {
-      room.leave();
-      room = null;
-    }
-    isConnected = false;
-    updateConnectionUI();
-  }
-});
-
-// Close modals
-document.querySelectorAll('.close').forEach(closeBtn => {
-  closeBtn.addEventListener('click', () => {
-    const modal = closeBtn.closest('.modal');
-    closeModal(modal);
+// Initialize app
+async function init() {
+  await Promise.all([initializeStrudel(), initializeP2P()]);
+  
+  // Event listeners
+  document.getElementById('connect-btn').addEventListener('click', handleConnect);
+  document.getElementById('join-btn').addEventListener('click', handleJoin);
+  document.getElementById('cancel-connect-btn').addEventListener('click', () => {
+    document.getElementById('connect-modal').classList.remove('active');
   });
-});
-
-// Close modals on outside click
-[presetModal, docsModal, blockSelectModal, connectModal].forEach(modal => {
-  modal.addEventListener('click', (e) => {
-    if (e.target === modal) {
-      closeModal(modal);
+  document.getElementById('play-btn').addEventListener('click', handlePlay);
+  document.getElementById('stop-btn').addEventListener('click', handleStop);
+  
+  document.getElementById('copy-room-btn').addEventListener('click', () => {
+    if (roomId) {
+      navigator.clipboard.writeText(`${window.location.href}`);
+      alert('Room URL copied to clipboard!');
     }
   });
-});
-
-// Copy room URL to clipboard
-function copyRoomURL() {
-  const currentRoomId = roomId || roomIdInput.value.trim();
-  if (currentRoomId) {
-    const url = new URL(window.location);
-    url.searchParams.set('room', currentRoomId);
-    navigator.clipboard.writeText(url.toString()).then(() => {
-      // Update button text temporarily
-      if (copyUrlBtn) {
-        copyUrlBtn.textContent = '✓ Copied!';
-        setTimeout(() => {
-          copyUrlBtn.textContent = '📋 Copy Room URL';
-        }, 2000);
-      }
-      if (shareRoomBtn) {
-        shareRoomBtn.textContent = '✓ Copied!';
-        setTimeout(() => {
-          shareRoomBtn.textContent = '📋 Share Room';
-        }, 2000);
-      }
-      // Show brief notification
-      const notification = document.createElement('div');
-      notification.textContent = 'Room URL copied to clipboard!';
-      notification.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        background: var(--success);
-        color: white;
-        padding: 1rem 1.5rem;
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-        z-index: 10000;
-        animation: slideIn 0.3s ease;
-      `;
-      document.body.appendChild(notification);
-      setTimeout(() => {
-        notification.style.animation = 'slideOut 0.3s ease';
-        setTimeout(() => notification.remove(), 300);
-      }, 2000);
-    }).catch(err => {
-      console.error('Failed to copy URL:', err);
-      alert('Failed to copy URL. Room ID: ' + currentRoomId);
+  
+  // Master controls
+  document.getElementById('master-mute-all')?.addEventListener('click', () => {
+    players.forEach((player) => {
+      player.muted = true;
     });
-  } else {
-    alert('No room ID available');
+    syncPlayerData();
+    updatePlayersDisplay();
+    if (isPlaying) evaluateMixedCode();
+  });
+  
+  document.getElementById('master-unmute-all')?.addEventListener('click', () => {
+    players.forEach((player) => {
+      player.muted = false;
+    });
+    syncPlayerData();
+    updatePlayersDisplay();
+    if (isPlaying) evaluateMixedCode();
+  });
+  
+  // Auto-connect if room ID in URL
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlRoomId = urlParams.get('room');
+  if (urlRoomId) {
+    playerName = `Player${Math.floor(Math.random() * 1000)}`;
+    roomId = urlRoomId;
+    setTimeout(() => {
+      initializeRoom(roomId, playerName);
+    }, 1000);
   }
+  
+  console.log('✓ App initialized');
 }
 
-if (copyUrlBtn) {
-  copyUrlBtn.addEventListener('click', copyRoomURL);
-}
+// Start app
+init();
 
-if (shareRoomBtn) {
-  shareRoomBtn.addEventListener('click', copyRoomURL);
-}
-
-// Auto-connect on page load
-async function autoConnect() {
-  // Read room ID from URL first
-  readRoomIdFromURL();
-  
-  // If no room ID exists, generate one and add to URL
-  if (!roomId) {
-    roomId = Math.random().toString(36).substring(2, 9);
-    updateURLWithRoomId(roomId);
-    if (roomIdInput) {
-      roomIdInput.value = roomId;
-    }
-    console.log('Auto-generated room ID:', roomId);
-  }
-  
-  // Generate a default user name if not provided
-  if (!userName) {
-    userName = `Player${Math.floor(Math.random() * 1000)}`;
-    if (userNameInput) {
-      userNameInput.value = userName;
-    }
-  }
-  
-  // Wait for Trystero to be ready
-  if (!trystero) {
-    console.log('Waiting for Trystero to load...');
-    return;
-  }
-  
-  // Auto-connect with room ID (always exists now)
-  const config = {
-    appId: 'strudelism-multiplayer'
-  };
-  
-  try {
-    initializeRoom(config);
-    console.log('Auto-connected to room:', roomId);
-  } catch (error) {
-    console.warn('Auto-connect failed:', error);
-    // Don't show alert on auto-connect failure - user can manually connect
-  }
-}
-
-// Initialize
-readRoomIdFromURL();
-
-// Initialize P2P and Strudel in parallel, then auto-connect
-Promise.all([
-  initializeP2P(),
-  initializeStrudel()
-]).then(() => {
-  generateCodeFromBlocks();
-  updateConnectionUI();
-  
-  // Auto-connect after everything is ready
-  setTimeout(() => {
-    autoConnect();
-  }, 1000); // Give it a moment for everything to settle
-}).catch(error => {
-  console.error('Initialization error:', error);
-});

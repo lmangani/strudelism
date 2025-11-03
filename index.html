@@ -3,125 +3,63 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Strudelism - Live Performance UI</title>
+  <title>Strudelism - Multi-Player Sequencer</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <div id="app">
+    <!-- Header -->
     <header class="header">
-      <h1>🎵 Strudelism - Multi-Player</h1>
+      <h1>🎵 Strudelism Multi-Player</h1>
       <div class="header-controls">
         <div class="session-info">
-          <span id="room-status" class="room-status">Disconnected</span>
-          <span id="peer-count" class="peer-count">0 peers</span>
-          <button id="share-room-btn" class="btn btn-small" style="display: none; margin-left: 0.5rem;">📋 Share Room</button>
+          <span id="room-status" class="badge badge-disconnected">Disconnected</span>
+          <span id="room-id-display" class="room-id"></span>
+          <button id="copy-room-btn" class="btn-icon" title="Copy Room ID">📋</button>
         </div>
-        <button id="connect-btn" class="btn btn-primary">🔗 Connect</button>
-        <button id="play-btn" class="btn btn-primary">▶ Play</button>
-        <button id="stop-btn" class="btn btn-secondary">⏹ Stop</button>
-        <button id="clear-btn" class="btn btn-secondary">🗑 Clear</button>
-        <button id="preset-btn" class="btn btn-secondary">📥 Presets</button>
-        <button id="docs-btn" class="btn btn-secondary">📚 Examples</button>
+        <button id="connect-btn" class="btn btn-primary">Connect</button>
+        <button id="play-btn" class="btn btn-play">▶ Play</button>
+        <button id="stop-btn" class="btn btn-stop">⏹ Stop</button>
       </div>
     </header>
 
-    <div class="main-container">
-      <div class="blocks-panel">
-        <div class="panel-header">
-          <h2>Your Blocks</h2>
-          <div>
-            <span id="user-name-display" class="user-name"></span>
-            <button id="add-block-btn" class="btn btn-small">+ Add Block</button>
+    <!-- Main Sequencer Layout -->
+    <div class="sequencer-container">
+      <!-- Players Grid -->
+      <div id="players-grid" class="players-grid">
+        <!-- Player slots will be added here dynamically -->
+      </div>
+
+      <!-- Master Output Panel (Host Only) -->
+      <div id="master-panel" class="master-panel" style="display: none;">
+        <div class="master-header">
+          <h2>🎚️ Master Output</h2>
+          <div class="master-controls">
+            <button id="master-mute-all" class="btn-toggle">🔇 Mute All</button>
+            <button id="master-unmute-all" class="btn-toggle">🔊 Unmute All</button>
           </div>
         </div>
-        <div id="blocks-container" class="blocks-container">
-          <!-- Blocks will be added here -->
-        </div>
-        
-        <!-- Remote blocks section (visible only to host) -->
-        <div id="remote-blocks-section" class="remote-blocks-section" style="display: none;">
-          <div class="panel-header">
-            <h2>Remote Blocks <span id="remote-blocks-count" class="badge">0</span></h2>
-          </div>
-          <div id="remote-blocks-container" class="blocks-container">
-            <!-- Remote blocks will be added here -->
-          </div>
-        </div>
-      </div>
-
-      <div class="repl-panel">
-        <div class="panel-header">
-          <h2>Your Code</h2>
-          <button id="update-code-btn" class="btn btn-small">🔄 Refresh</button>
-        </div>
-        <div id="repl-container" class="repl-container">
-          <!-- REPL will be embedded here -->
-        </div>
-      </div>
-
-      <div class="peers-panel">
-        <div class="panel-header">
-          <h2>Active Players</h2>
-        </div>
-        <div id="peers-container" class="peers-container">
-          <!-- Peer information will be shown here -->
+        <div id="master-code-preview" class="code-preview">
+          <pre id="master-code"></pre>
         </div>
       </div>
     </div>
 
-    <!-- Preset Modal -->
-    <div id="preset-modal" class="modal">
-      <div class="modal-content">
-        <span class="close">&times;</span>
-        <h2>Load Preset</h2>
-        <div class="preset-input-group">
-          <label>GitHub/Gist URL:</label>
-          <input type="text" id="preset-url" placeholder="https://gist.githubusercontent.com/... or https://raw.githubusercontent.com/...">
-          <button id="load-preset-btn" class="btn btn-primary">Load</button>
-        </div>
-        <div class="preset-examples">
-          <h3>Or choose from examples:</h3>
-          <div id="preset-examples-list" class="preset-examples-list"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Documentation Modal -->
-    <div id="docs-modal" class="modal">
-      <div class="modal-content modal-large">
-        <span class="close">&times;</span>
-        <h2>Strudel Examples & Documentation</h2>
-        <div id="docs-content" class="docs-content"></div>
-      </div>
-    </div>
-
-    <!-- Block Selection Modal -->
-    <div id="block-select-modal" class="modal">
-      <div class="modal-content">
-        <span class="close">&times;</span>
-        <h2>Add Block</h2>
-        <div id="block-types-list" class="block-types-list"></div>
-      </div>
-    </div>
-
-    <!-- Connection Modal -->
+    <!-- Connect Modal -->
     <div id="connect-modal" class="modal">
       <div class="modal-content">
-        <span class="close">&times;</span>
-        <h2>Join/Create Session</h2>
-        <div class="connect-input-group">
-          <label>Your Name:</label>
-          <input type="text" id="user-name-input" placeholder="Enter your name" maxlength="20">
+        <h2>Join Session</h2>
+        <div class="form-group">
+          <label>Your Name</label>
+          <input type="text" id="player-name-input" placeholder="Player Name" value="">
         </div>
-        <div class="connect-input-group">
-          <label>Room ID:</label>
-          <input type="text" id="room-id-input" placeholder="Enter or create room ID">
-          <small>Share the URL or room ID with other players</small>
-          <button id="copy-url-btn" class="btn btn-small" style="margin-top: 0.5rem; font-size: 0.85rem;">📋 Copy Room URL</button>
+        <div class="form-group">
+          <label>Room ID</label>
+          <input type="text" id="room-id-input" placeholder="Leave empty to create new room">
         </div>
-        <div class="connect-input-group">
-          <button id="join-room-btn" class="btn btn-primary">Join Session</button>
-          <button id="create-room-btn" class="btn btn-secondary">Create New Room</button>
+        <div class="modal-actions">
+          <button id="join-btn" class="btn btn-primary">Join Room</button>
+          <button id="cancel-connect-btn" class="btn btn-secondary">Cancel</button>
         </div>
       </div>
     </div>
