@@ -1716,6 +1716,7 @@ function initializeRoom(config) {
           syncCodeToPeers();
         }
       }, 1500);
+    });
     
     isConnected = true;
     updateConnectionUI();
