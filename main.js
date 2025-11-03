@@ -808,8 +808,8 @@ function evaluateMixedCode() {
   
   // Check if any peer has custom code (not generated from blocks)
   const hasCustomCode = Array.from(peers.values()).some(peer => peer.code && peer.code.trim() && !peer.code.startsWith('//'));
-  const codeEditor = document.getElementById('code-editor');
-  const localHasCustomCode = codeEditor && codeEditor.value.trim() && !codeEditor.value.startsWith('//') && !codeEditor.value.includes('stack(');
+  const codeEditorEl = document.getElementById('code-editor');
+  const localHasCustomCode = codeEditorEl && codeEditorEl.value.trim() && !codeEditorEl.value.startsWith('//') && !codeEditorEl.value.includes('stack(');
   
   // If using custom code mode, combine all custom code
   if (hasCustomCode || localHasCustomCode) {
@@ -817,7 +817,7 @@ function evaluateMixedCode() {
     
     // Add local custom code if present
     if (localHasCustomCode) {
-      allCode.push(codeEditor.value.trim());
+      allCode.push(codeEditorEl.value.trim());
     }
     
     // Add peer custom code
@@ -935,9 +935,9 @@ function evaluateMixedCode() {
   console.log('========================');
   
   // Update code editor to show what's being played
-  const codeEditor = document.getElementById('code-editor');
-  if (codeEditor) {
-    codeEditor.value = mixedCode;
+  const codeEditorEl = document.getElementById('code-editor');
+  if (codeEditorEl) {
+    codeEditorEl.value = mixedCode;
   }
   
   try {
