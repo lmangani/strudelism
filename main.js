@@ -39,32 +39,21 @@ async function initializeStrudel() {
     // CRITICAL: Load default samples BEFORE anything else
     console.log('Loading Strudel samples...');
     try {
-      // Load default Tidal Cycles samples - use await samples() if available
-      // The samples() function needs to be called properly
-      const samplesResult = evaluate('await samples("github:tidalcycles/dirt-samples")');
-      console.log('✓ Samples loaded successfully', samplesResult);
+      // Load default Tidal Cycles samples
+      // Note: samples() loads asynchronously, we just initiate it
+      evaluate('samples("github:tidalcycles/dirt-samples")');
+      console.log('✓ Samples load initiated');
+      
+      // Wait for samples to actually load (they load asynchronously)
+      // Give it some time for samples to download and register
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
       window.samplesLoaded = true;
+      console.log('✓ Samples should be loaded now');
     } catch (e) {
-      console.warn('Could not load samples with await, trying sync:', e);
-      try {
-        // Try without await
-        evaluate('samples("github:tidalcycles/dirt-samples")');
-        console.log('✓ Samples loaded (sync)');
-        window.samplesLoaded = true;
-      } catch (e2) {
-        console.warn('Sync load failed, trying direct:', e2);
-        try {
-          // Try direct samples path
-          evaluate('samples("bd", "github:tidalcycles/dirt-samples/bd")');
-          evaluate('samples("sn", "github:tidalcycles/dirt-samples/sn")');
-          evaluate('samples("hh", "github:tidalcycles/dirt-samples/hh")');
-          console.log('✓ Samples loaded (direct)');
-          window.samplesLoaded = true;
-        } catch (e3) {
-          console.error('Failed to load samples:', e3);
-          // Don't alert - just warn, samples might work anyway
-        }
-      }
+      console.warn('Could not load samples:', e);
+      // Set flag anyway - might work on next evaluation
+      window.samplesLoaded = false;
     }
     
     strudelInitialized = true;
@@ -98,37 +87,49 @@ function initializeRoom(roomName, playerNameValue) {
     const config = { appId: 'strudelism-multiplayer' };
     room = trystero(config, roomName);
     
-    // Wait for peer ID to be available
-    const checkPeerId = setInterval(() => {
-      if (room.selfId) {
-        ourPeerId = room.selfId;
-        console.log('Our peer ID:', ourPeerId);
+    // Get peer ID immediately (should be available after room creation)
+    // If not, wait for it
+    if (room.selfId) {
+      ourPeerId = room.selfId;
+      console.log('Our peer ID:', ourPeerId);
+    } else {
+      // Wait for peer ID with polling
+      const checkPeerId = setInterval(() => {
+        if (room.selfId) {
+          ourPeerId = room.selfId;
+          console.log('Our peer ID (from polling):', ourPeerId);
+          clearInterval(checkPeerId);
+          
+          // Update players map
+          if (players.has('local-')) {
+            const oldData = players.get('local-');
+            players.delete('local-');
+            players.set(ourPeerId, oldData);
+          }
+          
+          if (!players.has(ourPeerId)) {
+            players.set(ourPeerId, { name: playerName, code: '', muted: false });
+          }
+          
+          updatePlayersDisplay();
+        }
+      }, 100);
+      
+      // Timeout after 2 seconds
+      setTimeout(() => {
         clearInterval(checkPeerId);
-        
-        // Update players map with new peer ID if we had a placeholder
-        if (players.has('local-')) {
-          const oldData = players.get('local-');
-          players.delete('local-');
-          players.set(ourPeerId, oldData);
+        if (!ourPeerId) {
+          console.warn('Peer ID still not available, using placeholder');
+          ourPeerId = 'temp-' + Math.random().toString(36).substring(2, 9);
         }
-        
-        // Ensure self is in players map
-        if (!players.has(ourPeerId)) {
-          players.set(ourPeerId, { name: playerName, code: '', muted: false });
-        }
-        
-        updatePlayersDisplay();
-      }
-    }, 100);
+      }, 2000);
+    }
     
-    // Timeout after 5 seconds
-    setTimeout(() => {
-      clearInterval(checkPeerId);
-      if (!ourPeerId) {
-        console.warn('Peer ID not available, using placeholder');
-        ourPeerId = ourPeerId || 'temp-' + Math.random().toString(36).substring(2, 9);
-      }
-    }, 5000);
+    // Ensure self is in players map
+    if (ourPeerId && !players.has(ourPeerId)) {
+      players.set(ourPeerId, { name: playerName, code: '', muted: false });
+      updatePlayersDisplay();
+    }
     
     // Create actions
     const [sendPlayerData, getPlayerData] = room.makeAction('playerData');
@@ -159,7 +160,7 @@ function initializeRoom(roomName, playerNameValue) {
       if (isPlaying) {
         clearTimeout(window.remoteEvalTimeout);
         window.remoteEvalTimeout = setTimeout(() => {
-          evaluateMixedCode();
+          evaluateMixedCode().catch(e => console.error('Remote eval error:', e));
         }, 200);
       }
     });
@@ -447,7 +448,7 @@ function createPlayerCard(peerId, playerData, isSelf) {
         // Small delay to batch multiple edits
         clearTimeout(window.evalTimeout);
         window.evalTimeout = setTimeout(() => {
-          evaluateMixedCode();
+          evaluateMixedCode().catch(e => console.error('Eval error:', e));
         }, 300);
       }
     });
@@ -455,7 +456,7 @@ function createPlayerCard(peerId, playerData, isSelf) {
     // Eval button for local player
     const evalBtn = card.querySelector('[data-action="eval"]');
     if (evalBtn && isSelf) {
-      evalBtn.addEventListener('click', () => {
+      evalBtn.addEventListener('click', async () => {
         const code = editor.value.trim();
         if (code && evaluate) {
           // Ensure samples are loaded
@@ -463,6 +464,8 @@ function createPlayerCard(peerId, playerData, isSelf) {
             try {
               evaluate('samples("github:tidalcycles/dirt-samples")');
               window.samplesLoaded = true;
+              // Wait for samples to load
+              await new Promise(resolve => setTimeout(resolve, 1000));
             } catch (e) {
               console.warn('Could not load samples:', e);
             }
@@ -496,7 +499,7 @@ function createPlayerCard(peerId, playerData, isSelf) {
       
       // Re-evaluate if playing (all players do this)
       if (isPlaying) {
-        evaluateMixedCode();
+        evaluateMixedCode().catch(e => console.error('Mute eval error:', e));
       }
     });
   }
@@ -505,7 +508,7 @@ function createPlayerCard(peerId, playerData, isSelf) {
 }
 
 // Evaluate mixed code - ALL PLAYERS DO THIS LOCALLY
-function evaluateMixedCode() {
+async function evaluateMixedCode() {
   if (!evaluate) return;
   
   // Ensure samples are loaded first
@@ -515,7 +518,8 @@ function evaluateMixedCode() {
       evaluate('samples("github:tidalcycles/dirt-samples")');
       window.samplesLoaded = true;
       console.log('✓ Samples load initiated before evaluation');
-      // Note: samples load asynchronously, Strudel will handle it
+      // Wait a bit for samples to load
+      await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (e) {
       console.warn('Could not load samples:', e);
     }
@@ -562,6 +566,12 @@ function evaluateMixedCode() {
   // Only evaluate if playing
   if (isPlaying) {
     try {
+      // Ensure samples are ready before evaluating
+      if (!window.samplesLoaded) {
+        evaluate('samples("github:tidalcycles/dirt-samples")');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
       evaluate(mixedCode);
       console.log('✓ Mixed code evaluated:', activeCodes.length, 'players:', activePlayers.join(', '));
     } catch (error) {
@@ -653,7 +663,10 @@ async function handlePlay() {
     updatePlayButton();
     
     // Evaluate mixed code (all players do this locally)
-    evaluateMixedCode();
+    // Use await since evaluateMixedCode is now async
+    evaluateMixedCode().catch(e => {
+      console.error('Failed to evaluate mixed code:', e);
+    });
     
     // Sync play state to peers
     if (isConnected && room && room.actions) {
@@ -786,7 +799,7 @@ async function init() {
     });
     syncPlayerData();
     updatePlayersDisplay();
-    if (isPlaying) evaluateMixedCode();
+    if (isPlaying) evaluateMixedCode().catch(e => console.error('Mute all error:', e));
   });
   
   document.getElementById('master-unmute-all')?.addEventListener('click', () => {
@@ -795,7 +808,7 @@ async function init() {
     });
     syncPlayerData();
     updatePlayersDisplay();
-    if (isPlaying) evaluateMixedCode();
+    if (isPlaying) evaluateMixedCode().catch(e => console.error('Unmute all error:', e));
   });
   
   // Auto-connect if room ID in URL
@@ -883,10 +896,10 @@ function applyPreset(presetType) {
     }, 100);
   }
   
-  // If playing, re-evaluate
-  if (isPlaying) {
-    evaluateMixedCode();
-  }
+    // If playing, re-evaluate
+    if (isPlaying) {
+      evaluateMixedCode().catch(e => console.error('Preset eval error:', e));
+    }
   
   // Focus editor
   editor.focus();
