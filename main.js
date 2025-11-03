@@ -935,7 +935,6 @@ function evaluateMixedCode() {
   console.log('========================');
   
   // Update code editor to show what's being played
-  const codeEditorEl = document.getElementById('code-editor');
   if (codeEditorEl) {
     codeEditorEl.value = mixedCode;
   }
