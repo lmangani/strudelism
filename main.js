@@ -709,7 +709,12 @@ function generateCodeFromBlocks() {
     code = 'setcps(1)\n' + code;
   }
   
-  codeEditor.value = code;
+  // In multiplayer mode, don't update code editor with local-only code
+  // The host will show mixed code in the editor
+  if (!isConnected || !isHost) {
+    codeEditor.value = code;
+  }
+  // If host, the code editor will be updated by evaluateMixedCode()
   
   // Sync blocks with peers (but not the code itself) - with debouncing
   if (isConnected && room) {
@@ -720,10 +725,16 @@ function generateCodeFromBlocks() {
     }, 1000); // Only sync once per second max
   }
   
-  // Generate and evaluate mixed code from all peers (only if host)
-  if (isConnected && isHost && isPlaying) {
-    evaluateMixedCode();
-  } else if (!isConnected) {
+  // In multiplayer: host evaluates mixed code (auto-updates when blocks change)
+  // In single player: evaluate local code if playing
+  if (isConnected) {
+    // Multiplayer mode
+    if (isHost && isPlaying) {
+      // Host is playing - re-evaluate mixed code with updated blocks
+      console.log('Host block changed - re-evaluating mixed code');
+      evaluateMixedCode();
+    }
+  } else {
     // Single player mode - just evaluate local code
     if (isPlaying && strudelInitialized && evaluate && code.trim() && !code.startsWith('//')) {
       try {
@@ -779,7 +790,10 @@ function syncCodeToPeers() {
 
 // Generate mixed code from all peers (only host should call this)
 function evaluateMixedCode() {
-  if (!strudelInitialized || !evaluate) return;
+  if (!strudelInitialized || !evaluate) {
+    console.warn('Cannot evaluate: strudel not initialized');
+    return;
+  }
   
   // Only host evaluates and plays
   if (isConnected && !isHost) {
@@ -787,7 +801,10 @@ function evaluateMixedCode() {
     return;
   }
   
-  console.log('Evaluating mixed code - isHost:', isHost, 'peers:', peers.size);
+  console.log('=== GENERATING MIXED CODE ===');
+  console.log('isHost:', isHost);
+  console.log('peers count:', peers.size);
+  console.log('local blocks:', blocks.length);
   
   // Check if any peer has custom code (not generated from blocks)
   const hasCustomCode = Array.from(peers.values()).some(peer => peer.code && peer.code.trim() && !peer.code.startsWith('//'));
@@ -829,63 +846,75 @@ function evaluateMixedCode() {
     }
   }
   
-  // Fallback to block-based pattern mixing
+  // ALWAYS use block-based pattern mixing (ignore custom code for now)
   const allPatterns = [];
   
   // Add local patterns from blocks
-  const localActiveBlocks = blocks.filter(b => !b.disabled && !b.muted);
+  const localActiveBlocks = blocks.filter(b => b && !b.disabled && !b.muted);
   const localBaseBlocks = localActiveBlocks.filter(b => ['note', 'synth', 'sample'].includes(b.type));
-  localBaseBlocks.forEach(block => {
-    let patternCode = BLOCK_TYPES[block.type].generate(block.params);
-    // Apply local effects/modulations to local blocks
-    const localEffects = blocks.filter(b => b.type === 'effect' && !b.disabled && !b.muted);
-    localEffects.forEach(effectBlock => {
-      const effectCode = BLOCK_TYPES.effect.generate(effectBlock.params);
-      if (effectCode) patternCode += effectCode;
-    });
-    allPatterns.push(patternCode);
+  
+  console.log('LOCAL: Found', localActiveBlocks.length, 'active blocks,', localBaseBlocks.length, 'base blocks');
+  
+  localBaseBlocks.forEach((block, idx) => {
+    try {
+      let patternCode = BLOCK_TYPES[block.type].generate(block.params);
+      // Apply local effects/modulations to local blocks
+      const localEffects = blocks.filter(b => b && b.type === 'effect' && !b.disabled && !b.muted);
+      localEffects.forEach(effectBlock => {
+        const effectCode = BLOCK_TYPES.effect.generate(effectBlock.params);
+        if (effectCode) patternCode += effectCode;
+      });
+      console.log(`LOCAL Block ${idx + 1}:`, patternCode);
+      allPatterns.push(patternCode);
+    } catch (error) {
+      console.error('Failed to generate local pattern:', error, block);
+    }
   });
   
-  // Add peer patterns from blocks
-  console.log('Processing remote blocks from', peers.size, 'peers');
+  // Add peer patterns from blocks - CRITICAL: This must work!
+  console.log('REMOTE: Processing blocks from', peers.size, 'peers');
+  
   peers.forEach((peerData, peerId) => {
     if (!peerData) {
-      console.log('Peer', peerId, 'has no data');
+      console.log('  Peer', peerId, ': no data');
       return;
     }
     
     const peerBlocks = peerData.blocks || [];
+    console.log(`  Peer ${peerId} (${peerData.name || 'Unknown'}):`, peerBlocks.length, 'blocks');
+    
     if (peerBlocks.length === 0) {
-      console.log('Peer', peerId, '(', peerData.name, ') has no blocks');
+      console.log('    -> No blocks from this peer');
       return;
     }
-    
-    console.log('Processing', peerBlocks.length, 'blocks from peer', peerId, '(', peerData.name, ')');
     
     // Filter active blocks
     const activePeerBlocks = peerBlocks.filter(b => b && !b.disabled && !b.muted);
     const basePeerBlocks = activePeerBlocks.filter(b => ['note', 'synth', 'sample'].includes(b.type));
     
+    console.log(`    -> ${activePeerBlocks.length} active, ${basePeerBlocks.length} base blocks`);
+    
     basePeerBlocks.forEach((block, idx) => {
       try {
         const patternCode = BLOCK_TYPES[block.type].generate(block.params);
-        console.log(`  Block ${idx + 1} (${block.type}):`, patternCode);
+        console.log(`    REMOTE Block ${idx + 1} (${block.type}):`, patternCode);
         allPatterns.push(patternCode);
       } catch (error) {
-        console.error('Failed to generate pattern from peer block:', error, block);
+        console.error(`    ERROR generating pattern from remote block ${idx + 1}:`, error, block);
       }
     });
-    
-    console.log('Added', basePeerBlocks.length, 'patterns from peer', peerData.name);
   });
   
   console.log('=== MIXING SUMMARY ===');
   console.log('Local patterns:', localBaseBlocks.length);
   console.log('Remote patterns:', allPatterns.length - localBaseBlocks.length);
-  console.log('Total patterns to mix:', allPatterns.length);
+  console.log('TOTAL patterns to mix:', allPatterns.length);
   
   if (allPatterns.length === 0) {
-    console.log('No patterns to mix');
+    console.warn('=== NO PATTERNS TO MIX ===');
+    console.warn('This should not happen if blocks exist!');
+    console.warn('Local blocks:', blocks);
+    console.warn('Peers data:', Array.from(peers.entries()));
     return;
   }
   
@@ -903,14 +932,22 @@ function evaluateMixedCode() {
   
   console.log('=== FINAL MIXED CODE ===');
   console.log(mixedCode);
-  console.log('=======================');
+  console.log('========================');
+  
+  // Update code editor to show what's being played
+  const codeEditor = document.getElementById('code-editor');
+  if (codeEditor) {
+    codeEditor.value = mixedCode;
+  }
   
   try {
+    console.log('EVALUATING mixed code now...');
     evaluate(mixedCode);
-    console.log('Mixed code evaluated successfully');
+    console.log('✓ Mixed code evaluated successfully');
   } catch (error) {
-    console.error('Mixed code evaluation failed:', error);
-    console.error('Code that failed:', mixedCode);
+    console.error('✗ Mixed code evaluation FAILED:', error);
+    console.error('Failed code:', mixedCode);
+    alert('Error playing mixed code: ' + error.message);
   }
 }
 
@@ -1266,30 +1303,27 @@ playBtn.addEventListener('click', async () => {
   }
   
   // In multiplayer, only host can control playback
-  // But allow if we're alone (we're automatically host then)
   if (isConnected && !isHost) {
-      // Double-check: if we're alone, we should be host
-      if (peers.size === 0) {
-        isHost = true;
-        hostPeerId = ourPeerId;
-        updateConnectionUI();
-        console.log('Auto-promoted to host (we are alone)');
-        
-        // Announce we're host
-        if (room && room.actions && room.actions.sendHostAnnounce) {
-          try {
-            room.actions.sendHostAnnounce([ourPeerId, true]);
-          } catch (e) {
-            console.warn('Failed to announce host:', e);
-          }
+    // Double-check: if we're alone, we should be host
+    if (peers.size === 0) {
+      isHost = true;
+      hostPeerId = ourPeerId;
+      updateConnectionUI();
+      console.log('Auto-promoted to host (we are alone)');
+      
+      // Announce we're host
+      if (room && room.actions && room.actions.sendHostAnnounce) {
+        try {
+          room.actions.sendHostAnnounce([ourPeerId, true]);
+        } catch (e) {
+          console.warn('Failed to announce host:', e);
         }
-      } else {
-        alert('Only the session host can control playback.');
-        return;
       }
+    } else {
+      alert('Only the session host can control playback.');
+      return;
+    }
   }
-  
-  const codeEditor = document.getElementById('code-editor');
   
   if (isPlaying) {
     // Stop
@@ -1325,26 +1359,36 @@ playBtn.addEventListener('click', async () => {
     return;
   }
   
-  // Start playing
-  if (codeEditor && codeEditor.value.trim() && evaluate) {
-    try {
-      if (isConnected) {
-        // Multi-player: evaluate mixed code from all peers
-        evaluateMixedCode();
-      } else {
-        // Single player: evaluate local code
+  // Start playing - IN MULTIPLAYER, ALWAYS USE MIXED CODE
+  if (!evaluate) {
+    alert('Strudel is not initialized yet. Please wait...');
+    return;
+  }
+  
+  try {
+    if (isConnected) {
+      // MULTI-PLAYER MODE: Always use mixed code from all players
+      console.log('=== HOST PLAYING: Generating mixed code ===');
+      console.log('Local blocks:', blocks.length);
+      console.log('Remote peers:', peers.size);
+      
+      // Generate and evaluate mixed code
+      evaluateMixedCode();
+    } else {
+      // Single player mode: evaluate local code
+      const codeEditor = document.getElementById('code-editor');
+      if (codeEditor && codeEditor.value.trim()) {
         evaluate(codeEditor.value);
       }
-      isPlaying = true;
-      playBtn.textContent = '⏸ Pause';
-      if (isConnected) syncPlayState(true);
-    } catch (error) {
-      console.error('Play error:', error);
-      alert('Error playing code: ' + error.message);
-      isPlaying = false;
     }
-  } else if (!evaluate) {
-    alert('Strudel is not initialized yet. Please wait...');
+    
+    isPlaying = true;
+    playBtn.textContent = '⏸ Pause';
+    if (isConnected) syncPlayState(true);
+  } catch (error) {
+    console.error('Play error:', error);
+    alert('Error playing code: ' + error.message);
+    isPlaying = false;
   }
 });
 
@@ -1478,14 +1522,13 @@ function initializeRoom(config) {
       
       updatePeersDisplay();
       
-      // If we're host and playing, re-evaluate mixed code with new blocks
+      // If we're host and playing, IMMEDIATELY re-evaluate with new blocks
       if (isHost && isPlaying) {
-        console.log('Host: Re-evaluating with new blocks from', peerName, 'total remote blocks:', receivedBlocks.length);
-        // Small delay to batch multiple block updates
-        clearTimeout(window.hostEvalTimeout);
-        window.hostEvalTimeout = setTimeout(() => {
+        console.log('🔥 HOST: Received', receivedBlocks.length, 'blocks from', peerName, '- RE-EVALUATING NOW');
+        // Immediate re-evaluation to include new blocks
+        setTimeout(() => {
           evaluateMixedCode();
-        }, 300);
+        }, 100);
       }
     });
     
