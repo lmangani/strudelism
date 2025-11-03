@@ -102,8 +102,8 @@ function initializeRoom(roomName, playerNameValue) {
       // Update display (this will update the editor for remote players if host)
       updatePlayersDisplay();
       
-      // If host and playing, immediately re-evaluate mixed code
-      if (isHost && isPlaying) {
+      // If playing, immediately re-evaluate mixed code (all players)
+      if (isPlaying) {
         clearTimeout(window.remoteEvalTimeout);
         window.remoteEvalTimeout = setTimeout(() => {
           evaluateMixedCode();
@@ -111,23 +111,12 @@ function initializeRoom(roomName, playerNameValue) {
       }
     });
     
-    // Handle play state
+    // Handle play state (sync playback across all players)
     getPlayState((data, peerId) => {
-      const [playing, isSenderHost] = data || [false, false];
+      const [playing] = data || [false];
       
-      if (isSenderHost && peerId !== ourPeerId) {
-        // Remote host is controlling
-        if (playing && !isPlaying) {
-          isPlaying = true;
-          updatePlayButton();
-          evaluateMixedCode();
-        } else if (!playing && isPlaying) {
-          isPlaying = false;
-          if (hush) hush();
-          else if (evaluate) evaluate('hush()');
-          updatePlayButton();
-        }
-      }
+      // Sync playback state (optional - players can control independently)
+      // This helps keep everyone in sync if desired
     });
     
     // Handle host announcement
@@ -348,7 +337,6 @@ function createPlayerCard(peerId, playerData, isSelf) {
       <div class="player-name">
         ${playerData.name || 'Unknown'}
         ${isSelf ? '<span class="player-badge">You</span>' : ''}
-        ${isHost && peerId === ourPeerId ? '<span class="player-badge host">Host</span>' : ''}
       </div>
       <div class="player-controls">
         <button class="btn-toggle ${playerData.muted ? 'active' : ''}" 
@@ -401,8 +389,8 @@ function createPlayerCard(peerId, playerData, isSelf) {
         }
       }, 800); // Faster sync for better responsiveness
       
-      // If host is playing, immediately re-evaluate mixed code
-      if (isHost && isPlaying) {
+      // If playing, immediately re-evaluate mixed code (all players)
+      if (isPlaying) {
         // Small delay to batch multiple edits
         clearTimeout(window.evalTimeout);
         window.evalTimeout = setTimeout(() => {
@@ -429,20 +417,22 @@ function createPlayerCard(peerId, playerData, isSelf) {
     }
   }
   
-  // Mute button
+  // Mute button - ALL PLAYERS CAN MUTE ANYONE
   const muteBtn = card.querySelector('[data-action="mute"]');
   if (muteBtn) {
     muteBtn.addEventListener('click', () => {
       const muted = !playerData.muted;
       playerData.muted = muted;
       
+      // Sync mute state if it's our own or if we're muting someone
       if (peerId === ourPeerId) {
         syncPlayerData();
       }
       
       updatePlayersDisplay();
       
-      if (isHost && isPlaying) {
+      // Re-evaluate if playing (all players do this)
+      if (isPlaying) {
         evaluateMixedCode();
       }
     });
@@ -451,9 +441,9 @@ function createPlayerCard(peerId, playerData, isSelf) {
   return card;
 }
 
-// Evaluate mixed code (host only)
+// Evaluate mixed code - ALL PLAYERS DO THIS LOCALLY
 function evaluateMixedCode() {
-  if (!isHost || !evaluate) return;
+  if (!evaluate) return;
   
   // Collect all active (non-muted) codes
   const activeCodes = [];
@@ -535,8 +525,8 @@ function updateConnectionUI() {
   
   if (isConnected) {
     if (status) {
-      status.textContent = isHost ? 'Host' : 'Connected';
-      status.className = `badge ${isHost ? 'badge-host' : 'badge-connected'}`;
+      status.textContent = 'Connected';
+      status.className = 'badge badge-connected';
     }
     if (roomIdDisplay) {
       roomIdDisplay.textContent = `Room: ${roomId}`;
@@ -560,20 +550,10 @@ function updatePlayButton() {
   }
 }
 
-// Play/Stop handlers
+// Play/Stop handlers - ALL PLAYERS CAN CONTROL
 async function handlePlay() {
   if (!strudelInitialized) {
     await initializeStrudel();
-  }
-  
-  if (!isConnected) {
-    alert('Please connect to a room first');
-    return;
-  }
-  
-  if (!isHost) {
-    alert('Only the host can control playback');
-    return;
   }
   
   if (isPlaying) {
@@ -583,26 +563,26 @@ async function handlePlay() {
     isPlaying = false;
     updatePlayButton();
     
-    // Sync play state
-    if (room && room.actions) {
+    // Sync play state to peers
+    if (isConnected && room && room.actions) {
       try {
-        room.actions.sendPlayState([false, true]);
+        room.actions.sendPlayState([false, isHost]);
       } catch (e) {
         console.warn('Failed to sync play state:', e);
       }
     }
   } else {
-    // Play
+    // Play - evaluate mixed code locally (everyone hears the same mix)
     isPlaying = true;
     updatePlayButton();
     
-    // Evaluate mixed code first
+    // Evaluate mixed code (all players do this locally)
     evaluateMixedCode();
     
-    // Sync play state
-    if (room && room.actions) {
+    // Sync play state to peers
+    if (isConnected && room && room.actions) {
       try {
-        room.actions.sendPlayState([true, true]);
+        room.actions.sendPlayState([true, isHost]);
       } catch (e) {
         console.warn('Failed to sync play state:', e);
       }
@@ -611,19 +591,14 @@ async function handlePlay() {
 }
 
 function handleStop() {
-  if (!isHost) {
-    alert('Only the host can control playback');
-    return;
-  }
-  
   if (hush) hush();
   else if (evaluate) evaluate('hush()');
   isPlaying = false;
   updatePlayButton();
   
-  if (room && room.actions) {
+  if (isConnected && room && room.actions) {
     try {
-      room.actions.sendPlayState([false, true]);
+      room.actions.sendPlayState([false, isHost]);
     } catch (e) {
       console.warn('Failed to sync play state:', e);
     }
@@ -719,6 +694,15 @@ async function init() {
     }
   });
   
+  // Preset buttons
+  const presetButtons = document.querySelectorAll('.preset-btn');
+  presetButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const presetType = btn.getAttribute('data-preset');
+      applyPreset(presetType);
+    });
+  });
+  
   // Master controls
   document.getElementById('master-mute-all')?.addEventListener('click', () => {
     players.forEach((player) => {
@@ -750,6 +734,47 @@ async function init() {
   }
   
   console.log('✓ App initialized - your editor is ready!');
+}
+
+// Apply preset to local editor
+function applyPreset(presetType) {
+  if (!ourPeerId) return;
+  
+  const editor = document.getElementById(`code-${ourPeerId}`);
+  if (!editor) return;
+  
+  const presets = {
+    kick: "s('bd ~ ~ ~')",
+    snare: "s('sn ~ ~ ~')",
+    hats: "s('hh ~ x ~ x ~ x ~')",
+    melody: "n('c e g <c e g>').scale('C4:major').s('sine')",
+    bass: "n('<c1 ~ ~ c1>').s('saw').gain(0.7)"
+  };
+  
+  const code = presets[presetType];
+  if (code) {
+    editor.value = code;
+    
+    // Store locally
+    if (players.has(ourPeerId)) {
+      players.get(ourPeerId).code = code;
+    }
+    
+    // Sync to peers
+    if (isConnected) {
+      setTimeout(() => {
+        syncPlayerData();
+      }, 100);
+    }
+    
+    // If playing, re-evaluate
+    if (isPlaying) {
+      evaluateMixedCode();
+    }
+    
+    // Focus editor
+    editor.focus();
+  }
 }
 
 // Start app

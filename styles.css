@@ -59,6 +59,34 @@ body {
   flex-wrap: wrap;
 }
 
+.presets-bar {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  background: var(--bg-card);
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+}
+
+.preset-btn {
+  padding: 0.5rem 1rem;
+  background: var(--bg-dark);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.preset-btn:hover {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: white;
+  transform: translateY(-1px);
+}
+
 .session-info {
   display: flex;
   align-items: center;
@@ -269,9 +297,6 @@ body {
   font-weight: 600;
 }
 
-.player-badge.host {
-  background: var(--success);
-}
 
 .player-controls {
   display: flex;
