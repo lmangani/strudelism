@@ -219,40 +219,87 @@ function syncPlayerData() {
 // Update players display
 function updatePlayersDisplay() {
   const grid = document.getElementById('players-grid');
-  if (!grid) return;
+  if (!grid) {
+    console.error('Players grid not found!');
+    return;
+  }
   
-  // Always ensure self is in players map
-  const selfCode = document.getElementById(`code-${ourPeerId}`)?.value || '';
+  // CRITICAL: Always ensure self is in players map with current editor value
+  const selfEditor = document.getElementById(`code-${ourPeerId}`);
+  const selfCode = selfEditor ? selfEditor.value : '';
   const selfMuted = players.get(ourPeerId)?.muted || false;
-  players.set(ourPeerId, { name: playerName, code: selfCode, muted: selfMuted });
+  const selfName = playerName || `Player${Math.floor(Math.random() * 1000)}`;
+  
+  players.set(ourPeerId, { name: selfName, code: selfCode, muted: selfMuted });
   
   // Get all peer IDs (including self)
   const allPeerIds = Array.from(players.keys());
   
-  // Create cards for missing players, update existing ones
-  allPeerIds.forEach(peerId => {
+  // Ensure self is always first
+  const sortedPeerIds = [ourPeerId, ...allPeerIds.filter(id => id !== ourPeerId)];
+  
+  // Create/update cards for all players
+  sortedPeerIds.forEach(peerId => {
     const playerData = players.get(peerId);
+    if (!playerData) {
+      console.warn('No player data for', peerId);
+      return;
+    }
+    
     const isSelf = peerId === ourPeerId;
     
     let card = document.getElementById(`player-${peerId}`);
     
     if (!card) {
-      // Create new card
+      // Create new card - THIS IS WHERE THE EDITOR IS CREATED
+      console.log('Creating new card for', peerId, 'isSelf:', isSelf);
       card = createPlayerCard(peerId, playerData, isSelf);
       grid.appendChild(card);
     } else {
-      // Update existing card (for remote players)
-      card = createPlayerCard(peerId, playerData, isSelf);
+      // Update existing card (preserve editor content)
+      const existingEditor = card.querySelector(`#code-${peerId}`);
+      const currentCode = existingEditor ? existingEditor.value : '';
+      
+      // Only update if code changed externally
+      if (playerData.code !== currentCode && !isSelf) {
+        if (existingEditor) {
+          existingEditor.value = playerData.code || '';
+        }
+      }
+      
+      // Update muted state
+      const muted = playerData.muted;
+      card.className = `player-card ${isSelf ? 'self' : ''} ${muted ? 'muted' : ''} ${isHost && isSelf ? 'host' : ''}`;
+      
+      // Update mute button
+      const muteBtn = card.querySelector('[data-action="mute"]');
+      if (muteBtn) {
+        muteBtn.className = `btn-toggle ${muted ? 'active' : ''}`;
+        muteBtn.innerHTML = muted ? '🔇' : '🔊';
+      }
+      
+      // Update status
+      const statusEl = card.querySelector('.player-status');
+      if (statusEl) {
+        const code = isSelf ? currentCode : playerData.code;
+        const codeLines = code ? code.split('\n').length : 0;
+        statusEl.innerHTML = `
+          <span>${muted ? '🔇 Muted' : '🔊 Active'}</span>
+          <span>${codeLines > 0 ? codeLines + ' lines' : 'No code'}</span>
+        `;
+      }
     }
   });
   
-  // Remove cards for players that left (but keep self)
+  // Remove cards for players that left (but NEVER remove self)
   Array.from(grid.children).forEach(child => {
     const playerId = child.id.replace('player-', '');
-    if (!players.has(playerId) && playerId !== ourPeerId) {
+    if (playerId !== ourPeerId && !players.has(playerId)) {
       child.remove();
     }
   });
+  
+  console.log('Display updated. Players:', players.size, 'Cards in grid:', grid.children.length);
 }
 
 // Create player card
@@ -640,6 +687,22 @@ function handleJoin() {
 async function init() {
   await Promise.all([initializeStrudel(), initializeP2P()]);
   
+  // Initialize our peer ID immediately (will be set when room connects, but we need placeholder)
+  if (!ourPeerId) {
+    ourPeerId = 'local-' + Math.random().toString(36).substring(2, 9);
+  }
+  
+  // Set default player name
+  if (!playerName) {
+    playerName = `Player${Math.floor(Math.random() * 1000)}`;
+  }
+  
+  // Initialize self in players map immediately so editor shows up
+  players.set(ourPeerId, { name: playerName, code: '', muted: false });
+  
+  // Render initial self editor (before connecting)
+  updatePlayersDisplay();
+  
   // Event listeners
   document.getElementById('connect-btn').addEventListener('click', handleConnect);
   document.getElementById('join-btn').addEventListener('click', handleJoin);
@@ -679,14 +742,14 @@ async function init() {
   const urlParams = new URLSearchParams(window.location.search);
   const urlRoomId = urlParams.get('room');
   if (urlRoomId) {
-    playerName = `Player${Math.floor(Math.random() * 1000)}`;
+    playerName = playerName || `Player${Math.floor(Math.random() * 1000)}`;
     roomId = urlRoomId;
     setTimeout(() => {
       initializeRoom(roomId, playerName);
     }, 1000);
   }
   
-  console.log('✓ App initialized');
+  console.log('✓ App initialized - your editor is ready!');
 }
 
 // Start app
