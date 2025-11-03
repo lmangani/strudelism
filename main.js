@@ -37,22 +37,27 @@ async function initializeStrudel() {
     await initStrudel();
     
     // CRITICAL: Load default samples BEFORE anything else
+    // In Strudel REPL, samples() is called and it just works
+    // We need to call it and let Strudel handle the async loading
     console.log('Loading Strudel samples...');
+    
     try {
-      // Load default Tidal Cycles samples
-      // Note: samples() loads asynchronously, we just initiate it
+      // Call samples() - this initiates the load
+      // Strudel handles the async loading internally
       evaluate('samples("github:tidalcycles/dirt-samples")');
       console.log('✓ Samples load initiated');
       
-      // Wait for samples to actually load (they load asynchronously)
-      // Give it some time for samples to download and register
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait longer for samples to actually download and be available
+      // Dirt-samples is a large repo, needs time to download
+      console.log('Waiting for samples to download...');
+      await new Promise(resolve => setTimeout(resolve, 4000)); // 4 seconds for download
       
+      // Mark as loaded - Strudel will handle the rest
       window.samplesLoaded = true;
-      console.log('✓ Samples should be loaded now');
+      console.log('✓ Samples loaded and ready');
     } catch (e) {
       console.warn('Could not load samples:', e);
-      // Set flag anyway - might work on next evaluation
+      // Don't set flag to false - let it retry on next evaluation
       window.samplesLoaded = false;
     }
     
@@ -515,17 +520,18 @@ async function evaluateMixedCode() {
   if (!window.samplesLoaded) {
     console.log('Samples not loaded, loading now...');
     try {
-      // Load samples
+      // Load samples - Strudel handles async loading
       evaluate('samples("github:tidalcycles/dirt-samples")');
       
-      // Wait for samples to actually load
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait longer for samples to download (they're large)
+      await new Promise(resolve => setTimeout(resolve, 3000));
       
       window.samplesLoaded = true;
       console.log('✓ Samples loaded before evaluation');
     } catch (e) {
       console.warn('Could not load samples:', e);
-      // Still try to evaluate - might work
+      // Set flag anyway - might be loading
+      window.samplesLoaded = true;
     }
   }
   
@@ -574,8 +580,10 @@ async function evaluateMixedCode() {
       if (!window.samplesLoaded) {
         console.warn('Samples not loaded! Loading now...');
         evaluate('samples("github:tidalcycles/dirt-samples")');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait longer for large sample library
+        await new Promise(resolve => setTimeout(resolve, 3000));
         window.samplesLoaded = true;
+        console.log('✓ Samples loaded before evaluation');
       }
       
       // Evaluate the mixed code
@@ -658,12 +666,16 @@ async function handlePlay() {
   // Ensure samples are loaded before playing
   if (!window.samplesLoaded && evaluate) {
     try {
+      console.log('Loading samples before play...');
       evaluate('samples("github:tidalcycles/dirt-samples")');
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Wait for samples to download
+      await new Promise(resolve => setTimeout(resolve, 3000));
       window.samplesLoaded = true;
       console.log('✓ Samples loaded before play');
     } catch (e) {
       console.warn('Could not ensure samples:', e);
+      // Still try to play - samples might be loading
+      window.samplesLoaded = true;
     }
   }
   
@@ -858,17 +870,6 @@ function applyPreset(presetType) {
   if (!editor) return;
   
   const presets = {
-    kick: "sound('bd').s('bd ~ ~ ~')",
-    snare: "sound('sn').s('sn ~ ~ ~')",
-    hats: "sound('hh').s('hh ~ x ~ x ~ x ~')",
-    melody: "n('c e g <c e g>').scale('C4:major').s('sine')",
-    bass: "n('<c1 ~ ~ c1>').s('saw').gain(0.7)"
-  };
-  
-  // Alternative: use simpler syntax if samples are mapped
-  // Actually, in Strudel, 'bd', 'sn', 'hh' should work if samples are loaded
-  // Let's use the standard syntax
-  const presetsAlt = {
     kick: "s('bd ~ ~ ~')",
     snare: "s('sn ~ ~ ~')",
     hats: "s('hh ~ x ~ x ~ x ~')",
