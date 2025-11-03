@@ -511,17 +511,21 @@ function createPlayerCard(peerId, playerData, isSelf) {
 async function evaluateMixedCode() {
   if (!evaluate) return;
   
-  // Ensure samples are loaded first
+  // CRITICAL: Ensure samples are loaded before ANY evaluation
   if (!window.samplesLoaded) {
+    console.log('Samples not loaded, loading now...');
     try {
-      // Try loading samples if not already loaded
+      // Load samples
       evaluate('samples("github:tidalcycles/dirt-samples")');
+      
+      // Wait for samples to actually load
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
       window.samplesLoaded = true;
-      console.log('✓ Samples load initiated before evaluation');
-      // Wait a bit for samples to load
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log('✓ Samples loaded before evaluation');
     } catch (e) {
       console.warn('Could not load samples:', e);
+      // Still try to evaluate - might work
     }
   }
   
@@ -566,16 +570,20 @@ async function evaluateMixedCode() {
   // Only evaluate if playing
   if (isPlaying) {
     try {
-      // Ensure samples are ready before evaluating
+      // Double-check samples are loaded
       if (!window.samplesLoaded) {
+        console.warn('Samples not loaded! Loading now...');
         evaluate('samples("github:tidalcycles/dirt-samples")');
-        await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        window.samplesLoaded = true;
       }
       
+      // Evaluate the mixed code
       evaluate(mixedCode);
       console.log('✓ Mixed code evaluated:', activeCodes.length, 'players:', activePlayers.join(', '));
     } catch (error) {
       console.error('✗ Evaluation failed:', error);
+      console.error('Mixed code was:', mixedCode);
       updateMasterCode(`// Error: ${error.message}\n\n${mixedCode}`);
     }
   }
@@ -640,6 +648,23 @@ function updatePlayButton() {
 async function handlePlay() {
   if (!strudelInitialized) {
     await initializeStrudel();
+    // Extra wait to ensure samples are really loaded
+    if (!window.samplesLoaded) {
+      console.log('Waiting for samples after init...');
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+  
+  // Ensure samples are loaded before playing
+  if (!window.samplesLoaded && evaluate) {
+    try {
+      evaluate('samples("github:tidalcycles/dirt-samples")');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      window.samplesLoaded = true;
+      console.log('✓ Samples loaded before play');
+    } catch (e) {
+      console.warn('Could not ensure samples:', e);
+    }
   }
   
   if (isPlaying) {
